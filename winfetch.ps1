@@ -104,7 +104,7 @@ if ($help) {
     exit 0
 }
 
-
+#region: Configuration
 # ===== CONFIG MANAGEMENT =====
 $defaultConfig = @'
 # ===== WINFETCH CONFIGURATION =====
@@ -211,6 +211,7 @@ $defaultConfig = @'
     "disk"
     # "battery"
     # "locale"
+    # "timezone"
     # "weather"
     # "local_ip"
     # "public_ip"
@@ -273,6 +274,8 @@ if (-not $config -or $all) {
         "disk"
         "battery"
         "locale"
+        "localeex"
+        "timezone"
         "weather"
         "local_ip"
         "public_ip"
@@ -286,7 +289,10 @@ foreach ($param in $PSBoundParameters.Keys) {
     Set-Variable $param $PSBoundParameters[$param]
 }
 
+#endregion: Configuration
+
 # ===== VARIABLES =====
+#region: Variables
 $e = [char]0x1B
 $ansiRegex = '([\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-ntqry=><~])))'
 $cimSession = New-CimSession
@@ -294,7 +300,23 @@ $os = Get-CimInstance -ClassName Win32_OperatingSystem -Property Caption,OSArchi
 $t = if ($blink) { "5" } else { "1" }
 $COLUMNS = $imgwidth
 
+# ===== UPDATE PROCESS TYPE FOR 5.1 =====
+# NOTE: Approx. 100ms added
+if($PSEdition -eq 'Desktop') {
+    # .NET Core contains Parent and CommandLine properties, but not Desktop. This adds them, albeit more slowly, as it must query WMI for each process.
+    # Add _CIMSession property to System.Diagnostics.Process to more quickly retrieve remote properties
+    Update-TypeData -MemberType ScriptProperty -MemberName _CIMInstance -TypeName 'System.Diagnostics.Process' -Value {try{Get-CimInstance -CimSession $cimSession -ClassName Win32_Process -Filter "ProcessId = '$($this.Id)'"}catch{$_}} -Force
+    # Add ParentProcessId pulled from Win32_Process
+    Update-TypeData -MemberType ScriptProperty -MemberName ParentProcessId -TypeName 'System.Diagnostics.Process' -Value {try{($this._CIMInstance).ParentProcessId}catch{$_}} -Force
+    # Finally, get the actual Process object for the Parent
+    Update-TypeData -MemberType ScriptProperty -MemberName Parent -TypeName 'System.Diagnostics.Process' -Value {try{Get-Process -Id $this.ParentProcessId}catch{$_}} -Force
+    # Add CommandLine pulled from Win32_Process
+    # Update-TypeData -MemberType ScriptProperty -MemberName CommandLine -TypeName 'System.Diagnostics.Process' -Value {try{($this._CIMInstance).CommandLine}catch{$_}} -Force
+}
+#endregion: Variables
+
 # ===== UTILITY FUNCTIONS =====
+#region: Utility Functions
 function get_percent_bar {
     param ([Parameter(Mandatory)][int]$percent)
 
@@ -362,8 +384,10 @@ function truncate_line {
 
     return $trucatedOutput
 }
+#endregion: Utility Functions
 
 # ===== IMAGE =====
+#region: Image
 $img = if (-not $noimage) {
     if ($image) {
         if ($image -eq 'wallpaper') {
@@ -544,8 +568,9 @@ $img = if (-not $noimage) {
         }
     }
 }
+#endregion: Image
 
-
+#region: Info Functions
 # ===== BLANK =====
 function info_blank {
     return @{}
@@ -657,25 +682,15 @@ function info_resolution {
 # ===== TERMINAL =====
 # this section works by getting the parent processes of the current powershell instance.
 function info_terminal {
-    $programs = 'powershell', 'pwsh', 'winpty-agent', 'cmd', 'zsh', 'sh', 'bash', 'fish', 'env', 'nu', 'elvish', 'csh', 'tcsh', 'python', 'xonsh'
-    if ($PSVersionTable.PSEdition.ToString() -ne 'Core') {
-        $parent = Get-Process -Id (Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $PID" -Property ParentProcessId -CimSession $cimSession).ParentProcessId -ErrorAction Ignore
-        for () {
-            if ($parent.ProcessName -in $programs) {
-                $parent = Get-Process -Id (Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $($parent.ID)" -Property ParentProcessId -CimSession $cimSession).ParentProcessId -ErrorAction Ignore
-                continue
-            }
-            break
+    $programsparent = 'powershell', 'pwsh', 'winpty-agent', 'cmd', 'zsh', 'sh', 'bash', 'fish', 'env', 'nu', 'elvish', 'csh', 'tcsh', 'python', 'xonsh'
+    # Because the Parent scriptproperty was added, we don't care if we're on Desktop or Core.
+    $parent = (Get-Process -Id $PID).Parent
+    for () {
+        if ($parent.ProcessName -in $programsparent) {
+            $parent = (Get-Process -Id $parent.ID).Parent
+            continue
         }
-    } else {
-        $parent = (Get-Process -Id $PID).Parent
-        for () {
-            if ($parent.ProcessName -in $programs) {
-                $parent = (Get-Process -Id $parent.ID).Parent
-                continue
-            }
-            break
-        }
+        break
     }
 
     $terminal = switch ($parent.ProcessName) {
@@ -685,6 +700,15 @@ function info_terminal {
         'WindowsTerminal' { 'Windows Terminal' }
         'FluentTerminal.SystemTray' { 'Fluent Terminal' }
         'Code' { 'Visual Studio Code' }
+        # %ProgramFiles%\Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.exe
+        # %ProgramFiles%\Microsoft Visual Studio\2022\Community\Common7\ServiceHub\Hosts\ServiceHub.Host.dotnet.x64\ServiceHub.Host.dotnet.x64.exe
+        {$PSItem -in 'devenv','ServiceHub.Host.dotnet.x64'} {
+            if($parent.Path -like '*\Microsoft Visual Studio\2022*') {
+                'Visual Studio 2022'
+            } else {
+                'Visual Studio'
+            }
+        }
         default { $PSItem }
     }
 
@@ -866,6 +890,7 @@ function info_ps_pkgs {
 function info_pkgs {
     $pkgs = @()
 
+    # TODO: look into https://learn.microsoft.com/en-us/windows/package-manager/winget/export
     if ("winget" -in $ShowPkgs -and (Get-Command -Name winget -ErrorAction Ignore)) {
         $wingetpkg = (winget list | Where-Object {$_.Trim("`n`r`t`b-\|/ ").Length -ne 0} | Measure-Object).Count - 1
 
@@ -1350,6 +1375,29 @@ function info_locale {
     }
 }
 
+# ===== LOCALE (EX) =====
+# Performance improvement is ~10ms over the large hashtable and registry lookup
+function info_localeex {
+    # $Culture = Get-Culture
+    $Culture = [System.Globalization.CultureInfo]::CurrentCulture
+    $RegionInfo = [System.Globalization.RegionInfo]::CurrentRegion
+    return @{
+        title = "Locale (Extended)"
+        content = "$($RegionInfo.DisplayName), $($Culture.DisplayName)"
+    }
+}
+
+# ===== TIMEZONE =====
+function info_timezone {
+    # ID = Timezone
+    # DisplayName = (UTC-/+xxx) Timezone (Region)
+    # $TimeZone = Get-TimeZone
+    $TimeZone = [System.TimeZoneInfo]::Local
+    return @{
+        title = "Timezone"
+        content = $TimeZone.DisplayName
+    }
+}
 
 # ===== WEATHER =====
 function info_weather {
@@ -1405,8 +1453,9 @@ function info_public_ip {
         }
     }
 }
+#endregion: Functions
 
-
+#region: Main
 if (-not $stripansi) {
     # unhide the cursor after a terminating error
     trap { "$e[?25h"; break }
@@ -1506,6 +1555,9 @@ if (-not $stripansi) {
 } else {
     Write-Output "`n"
 }
+
+$cimSession | Remove-CimSession
+#endregion: Main
 
 #  ___ ___  ___
 # | __/ _ \| __|

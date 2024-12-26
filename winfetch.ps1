@@ -4,7 +4,7 @@
 # (!) This file must to be saved in UTF-8 with BOM encoding in order to work with legacy Powershell 5.x
 
 <#PSScriptInfo
-.VERSION 2.5.1
+.VERSION 2.5.3
 .GUID 27c6f0dd-dbf2-4a3e-90df-a23c3c6c630d
 .AUTHOR Winfetch contributers
 .PROJECTURI https://github.com/lptstr/winfetch
@@ -77,6 +77,11 @@ param(
     [string][alias('l')]$logo,
     [switch][alias('b')]$blink,
     [switch][alias('s')]$stripansi,
+    # NOTE: This parameter will depend on the terminal being used, and having an img2sixel build.
+    # https://www.arewesixelyet.com has a list of terminals that support sixel.
+    # Windows Terminal supports sixel as of Preview 1.22.
+    [Parameter(DontShow)][switch][alias('x')]$sixel,
+    [switch]$timed,
     [switch][alias('a')]$all,
     [switch][alias('h')]$help,
     [ValidateSet("text", "bar", "textbar", "bartext")][string]$cpustyle = "text",
@@ -84,7 +89,7 @@ param(
     [ValidateSet("text", "bar", "textbar", "bartext")][string]$diskstyle = "text",
     [ValidateSet("text", "bar", "textbar", "bartext")][string]$batterystyle = "text",
     [ValidateScript({$_ -gt 1 -and $_ -lt $Host.UI.RawUI.WindowSize.Width-1})][alias('w')][int]$imgwidth = 35,
-    [ValidateScript({$_ -ge 0 -and $_ -le 255})][alias('t')][int]$alphathreshold = 50,
+    [alias('t')][byte]$alphathreshold = 50,
     [array]$showdisks = @($env:SystemDrive),
     [array]$showpkgs = @("scoop", "choco")
 )
@@ -93,6 +98,8 @@ if (-not ($IsWindows -or $PSVersionTable.PSVersion.Major -eq 5)) {
     Write-Error "Only supported on Windows."
     exit 1
 }
+
+$script:VERBOSE = $PSBoundParameters.ContainsKey('Verbose')
 
 # ===== DISPLAY HELP =====
 if ($help) {
@@ -105,6 +112,9 @@ if ($help) {
 }
 
 #region: Configuration
+# Start global timer
+$sw1 = [System.Diagnostics.Stopwatch]::StartNew()
+
 # ===== CONFIG MANAGEMENT =====
 $defaultConfig = @'
 # ===== WINFETCH CONFIGURATION =====
@@ -885,7 +895,7 @@ function info_ps_pkgs {
     }
 }
 
-
+# TODO: Improve winget speed and detection
 # ===== PACKAGES =====
 function info_pkgs {
     $pkgs = @()
@@ -1455,6 +1465,9 @@ function info_public_ip {
 }
 #endregion: Functions
 
+$timeoverhead = $sw1.Elapsed
+$timetotal = [timespan]::Zero
+
 #region: Main
 if (-not $stripansi) {
     # unhide the cursor after a terminating error
@@ -1487,7 +1500,12 @@ if ($img -and -not $stripansi) {
 # write info
 foreach ($item in $config) {
     if (Test-Path Function:"info_$item") {
-        $info = & "info_$item"
+        if($timed) {
+            $infotime = Measure-Command {$info = & "info_$item"}
+            $timetotal += $infotime
+        } else {
+            $info = & "info_$item"
+        }
     } else {
         $info = @{ title = "$e[31mfunction 'info_$item' not found" }
     }
@@ -1496,15 +1514,20 @@ foreach ($item in $config) {
         continue
     }
 
-    if ($info -isnot [array]) {
+    # this doesn't need to be cast as an array for foreach to work on a single object
+    <# if ($info -isnot [array]) {
         $info = @($info)
-    }
+    } #>
 
     foreach ($line in $info) {
         $output = "$e[1;33m$($line["title"])$e[0m"
 
         if ($line["title"] -and $line["content"]) {
-            $output += ": "
+            if($timed) {
+                $output = "$e[90m($e[37m{0:n3}$e[96ms$e[90m){1}: " -f $infotime.TotalSeconds, $output
+            } else {
+                $output += ": "
+            }
         }
 
         $output += "$($line["content"])"
@@ -1556,6 +1579,14 @@ if (-not $stripansi) {
     Write-Output "`n"
 }
 
+if($timed) {
+    "$e[1;33mOverhead$e[0m:   {0:n3}" -f $timeoverhead.TotalSeconds
+    "$e[1;33mFunctions$e[0m:  {0:n3}" -f $timetotal.TotalSeconds
+    "$e[1;33mFunc Avg$e[0m:   {0:n3}" -f ($timetotal.TotalSeconds / $writtenLines)
+    "$e[1;33mTotal time$e[0m: {0:n3}" -f $sw1.Elapsed.TotalSeconds
+}
+
+$sw1.Stop()
 $cimSession | Remove-CimSession
 #endregion: Main
 

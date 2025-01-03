@@ -431,23 +431,37 @@ function info_locale_reg {
     }
 }
 # <<===================<< Locale (.NET)
-# TODO: Compare performance of methods
 function info_locale_net {
-    $Culture = Get-Culture
+    # Get the current region (location) from .NET which saves a few MS over the registry
+    $RegionInfo = [System.Globalization.RegionInfo]::CurrentRegion.DisplayName
+    
+    # NOTE: The current CultureInfo (language) can be found in the static CurrentCulture property, but it only reflects the
+    #   active one as opposed to all installed languages
     # $Culture = [System.Globalization.CultureInfo]::CurrentCulture
-    $RegionInfo = [System.Globalization.RegionInfo]::CurrentRegion
+    
+    # Get the current user's available languages using the registry
+    # Iterate through registry key in case multiple languages are configured
+    (Get-ItemProperty -Path 'HKCU:\Control Panel\International\User Profile').Languages | ForEach-Object {
+        # Retrieve the language name from CultureInfo
+        $languagecode = $_
+        try {
+            # Cross-reference the language code with the CultureInfo DisplayName
+            $languagename = [System.Globalization.CultureInfo]::GetCultureInfo($languagecode).DisplayName
+            $Languages += " - $languagename"
+        } catch {
+            # if not found, just display the code
+            $Languages += " - $languagecode"
+        }
+    }
     return @{
-        title   = 'Locale (Ex)'
-        content = "$($RegionInfo.DisplayName), $($Culture.DisplayName)"
+        title   = 'Locale'
+        content = "$RegionInfo$Languages"
     }
 }
 # <<===================<< Timezone
-# TODO: Compare with retrieving from Win32_TimeZone.StandardName or Caption
 function info_timezone_net {
-    # ID = Timezone
-    # DisplayName = (UTC-/+xxx) Timezone (Region)
     # $TimeZone = Get-TimeZone
-    [System.TimeZoneInfo]::Local.DisplayName
+    $TimeZone = [System.TimeZoneInfo]::Local
     return @{
         title   = 'Timezone'
         content = $TimeZone.DisplayName
@@ -458,6 +472,23 @@ function info_timezone_wmi {
     return @{
         title   = 'Timezone'
         content = $TimeZone.Caption
+    }
+}
+function info_cpu_reg1 {
+    $CPUName = Get-ItemPropertyValue -Path 'HKLM:\HARDWARE\DESCRIPTION\System\CentralProcessor\0' -Name ProcessorNameString
+    $CPUSpeed = Get-ItemPropertyValue -Path 'HKLM:\HARDWARE\DESCRIPTION\System\CentralProcessor\0' -Name '~MHz'
+    return @{
+        title   = 'CPU'
+        content = '{0}, {1:n2}GHz' -f $CPUName, ($CPUSpeed / 1000)
+    }
+}
+function info_cpu_reg2 {
+    $CPUKey = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Default').OpenSubKey('HARDWARE\DESCRIPTION\System\CentralProcessor\0')
+    $CPUName = $CPUKey.GetValue('ProcessorNameString')
+    $CPUSpeed = $CPUKey.GetValue('~MHz')
+    return @{
+        title   = 'CPU'
+        content = '{0}, {1:n2}GHz' -f $CPUName, ($CPUSpeed / 1000)
     }
 }
 # PSPT Profile: 391ms vs 478ms, 17 vs 91
@@ -473,44 +504,108 @@ function info_timezone_wmi {
 # info_timezone_net # 97, 15, 21, 2
 # info_timezone_wmi # 105, 58, 117, 19
 
-$Cmds = @(
-    'info_resolution_net' #  1.81 avg
-    'info_resolution_wmi' # 74.67 avg
-    'info_locale_net'     #  0.52 avg
-    'info_locale_reg'     #  4.82 avg
-    'info_timezone_net'   #  2.05 avg
-    'info_timezone_wmi'   # 11.20 avg
+$config = @(
+    'resolution_net' #  1.81 avg
+    'resolution_wmi' # 74.67 avg
+    'locale_net'     #  0.52 avg
+    'locale_reg'     #  4.82 avg
+    'timezone_net'   #  2.05 avg
+    'timezone_wmi'   # 11.20 avg
+    'cpu_reg1'
+    'cpu_reg2'
 )
+# item = individual function name
+# output = function result
+# results = Command = item, Output = output, Time = execution time
 
-# Initialize an array to store the results
-$results = @()
-
-# Iterate through each command in $Cmds
-foreach ($cmd in $Cmds) {
-    # Initialize variables to store total execution time and output
-    $totalExecutionTime = 0
-    $output = $null
-
-    # Run each command 10 times
-    for ($i = 0; $i -lt 10; $i++) {
-        $executionTime = Measure-Command {
-            $output = & $cmd
+function test-main {
+    # Initialize an array to store the results
+    $results = @()
+    
+    # Iterate through each command in $Cmds
+    foreach ($item in $config) {
+        # Initialize variables to store total execution time and output
+        $totalExecutionTime = 0
+        $output = $null
+    
+        # Run each command 10 times
+        for ($i = 0; $i -lt 10; $i++) {
+            $executionTime = Measure-Command {
+                $output = & "info_$item"
+            }
+            $totalExecutionTime += $executionTime.TotalMilliseconds
         }
-        $totalExecutionTime += $executionTime.TotalMilliseconds
+    
+        # Calculate the average execution time
+        $averageExecutionTime = $totalExecutionTime / 10
+    
+        # Store the output and average execution time in the results array
+        $results += [pscustomobject]@{
+            Command       = $cmd
+            Output        = $output.content
+            ExecutionTime = [math]::Round($averageExecutionTime, 2)
+        }
     }
-
-    # Calculate the average execution time
-    $averageExecutionTime = $totalExecutionTime / 10
-
-    # Store the output and average execution time in the results array
-    $results += [pscustomobject]@{
-        Command       = $cmd
-        Output        = $output.content
-        ExecutionTime = [math]::Round($averageExecutionTime, 2)
-    }
+    
+    # Output the results
+    $results | ogv
 }
 
-# Output the results
-$results | ogv
+# NOTE: passing the function body with both using: and function: works
+# $jobtest = Start-Job -Name 'info_test' -ScriptBlock { & ([scriptblock]::Create(${using:function:info_timezone_net})) }
+# NOTE: Dynamic function call works by passing the function name as a string and expanding with iex
+# BUG: But... because the function has to be re-defined, it likely isn't a net performance gain
+# $Functionname = 'info_timezone_net'
+$jobtest = Start-Job -Name 'info_test' -ArgumentList $(Invoke-Expression "`$function:$Functionname") -ScriptBlock { param($func) Invoke-Expression $func }
+
+function test-mta {
+    $results = @()
+
+    # run each command in a separate thread
+    foreach ($item in $config) {
+        $funcname = "info_$item"
+        $splat = @{
+            Name          = $funcname
+            ArgumentList  = $(Invoke-Expression "`$function:$funcname")
+            ScriptBlock   = {
+                param($func)
+                Invoke-Expression $func
+            }
+            ThrottleLimit = 5
+        }
+        if(Test-Path $funcname) {
+            $ThreadJob = Start-ThreadJob @splat
+        } else {
+            $results += [pscustomobject]@{
+                Command       = "$e[31mfunction '$funcname' not found"
+                Output        = $null
+                ExecutionTime = 0
+            }
+        }
+    }
+    
+    # Wait for all jobs to complete
+    $jobs = Get-Job -Name info_*
+    $jobs | Wait-Job
+
+    # Process each job result
+    foreach ($job in $jobs) {
+        $infotime = $job.PSEndTime.Value - $job.PSBeginTime.Value
+        $timetotal += $infotime
+        $info = Receive-Job -Job $job
+        Remove-Job -Job $job
+
+        # Calculate the average execution time
+        $averageExecutionTime = $timetotal / 10
+    
+        # Store the output and average execution time in the results array
+        $results += [pscustomobject]@{
+            Command       = $cmd
+            Output        = $info
+            ExecutionTime = [math]::Round($averageExecutionTime, 2)
+        }
+    }
+    $results
+}
 
 $cimSession | Remove-CimSession

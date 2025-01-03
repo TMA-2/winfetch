@@ -1,5 +1,6 @@
 ﻿#!/usr/bin/env -S pwsh -nop
 #requires -version 5
+#requires -Modules ThreadJob
 
 # (!) This file must to be saved in UTF-8 with BOM encoding in order to work with legacy Powershell 5.x
 
@@ -82,6 +83,7 @@ param(
     # Windows Terminal supports sixel as of Preview 1.22.
     [Parameter(DontShow)][switch][alias('x')]$sixel,
     [switch]$timed,
+    [switch]$multithreaded,
     [switch][alias('a')]$all,
     [switch][alias('h')]$help,
     [ValidateSet("text", "bar", "textbar", "bartext")][string]$cpustyle = "text",
@@ -748,7 +750,7 @@ function info_theme {
 
 # ===== CPU/GPU =====
 function info_cpu {
-    $cpu = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey('LocalMachine', $Env:COMPUTERNAME).OpenSubKey("HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+    $cpu = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Default').OpenSubKey("HARDWARE\DESCRIPTION\System\CentralProcessor\0")
     $cpuname = $cpu.GetValue("ProcessorNameString")
     $cpuname = if ($cpuname.Contains('@')) {
         ($cpuname -Split '@')[0].Trim()
@@ -757,7 +759,8 @@ function info_cpu {
     }
     return @{
         title   = "CPU"
-        content = "$cpuname @ $($cpu.GetValue("~MHz") / 1000)GHz" # [math]::Round($cpu.GetValue("~MHz") / 1000, 1) is 2-5ms slower
+        content = "{0} @ {1:n2}GHz" -f $cpuname, ($cpu.GetValue("~MHz") / 1000) # the format method rounds without losing as much speed as calling the [math]::Round() method
+        # [math]::Round($cpu.GetValue("~MHz") / 1000, 1) is 2-5ms slower
     }
 }
 
@@ -1496,65 +1499,137 @@ if ($img -and -not $stripansi) {
     Write-Output "$e[$($img.Length + 1)A"
 }
 
-
-# write info
-foreach ($item in $config) {
-    if (Test-Path Function:"info_$item") {
-        if($timed) {
-            $infotime = Measure-Command {$info = & "info_$item"}
-            $timetotal += $infotime
-        } else {
-            $info = & "info_$item"
+# BUG: script functions are not recognized in Job scriptblocks unless the definition is passed in ArgumentList or InitializationScript
+if($multithreaded) {
+    # create thread jobs for each function
+    foreach($item in $config) {
+        $splat = @{
+            Name = "info_$item"
+            ScriptBlock = {
+                if (Test-Path Function:"info_$item") {
+                    & "info_$item"
+                } else {
+                    @{ title = "$e[31mfunction 'info_$item' not found" }
+                }
+            }
+            ThrottleLimit = 5
         }
-    } else {
-        $info = @{ title = "$e[31mfunction 'info_$item' not found" }
+        $ThreadJob = Start-ThreadJob @splat
     }
+    
+    # Wait for all jobs to complete
+    $jobs = Get-Job
+    $jobs | Wait-Job
 
-    if (-not $info) {
-        continue
+    # Process each job result
+    foreach ($job in $jobs) {
+        $infotime = $job.PSEndTime.Value - $job.PSBeginTime.Value
+        $timetotal += $infotime
+        $info = Receive-Job -Job $job
+        Remove-Job -Job $job
+    
+        if (-not $info) {
+            continue
+        }
+    
+        foreach ($line in $info) {
+            $output = "$e[1;33m$($line["title"])$e[0m"
+    
+            if ($line["title"] -and $line["content"]) {
+                if($timed) {
+                    $output = "$e[90m($e[37m{0:n3}$e[96ms$e[90m){1}: " -f $infotime.TotalSeconds, $output
+                } else {
+                    $output += ": "
+                }
+            }
+    
+            $output += "$($line["content"])"
+    
+            if ($img) {
+                if (-not $stripansi) {
+                    # move cursor to right of image
+                    $output = "$e[$(2 + $COLUMNS + $GAP)G$output"
+                } else {
+                    # write image progressively
+                    $imgline = ("$($img[$writtenLines])"  -replace $ansiRegex, "").PadRight($COLUMNS)
+                    $output = " $imgline   $output"
+                }
+            }
+    
+            $writtenLines++
+    
+            if ($stripansi) {
+                $output = $output -replace $ansiRegex, ""
+                if ($output.Length -gt $freeSpace) {
+                    $output = $output.Substring(0, $output.Length - ($output.Length - $freeSpace))
+                }
+            } else {
+                $output = truncate_line $output $freeSpace
+            }
+    
+            Write-Output $output
+        }
     }
-
-    # this doesn't need to be cast as an array for foreach to work on a single object
-    <# if ($info -isnot [array]) {
-        $info = @($info)
-    } #>
-
-    foreach ($line in $info) {
-        $output = "$e[1;33m$($line["title"])$e[0m"
-
-        if ($line["title"] -and $line["content"]) {
+} else {
+    # write info
+    foreach ($item in $config) {
+        if (Test-Path Function:"info_$item") {
             if($timed) {
-                $output = "$e[90m($e[37m{0:n3}$e[96ms$e[90m){1}: " -f $infotime.TotalSeconds, $output
+                $infotime = Measure-Command {$info = & "info_$item"}
+                $timetotal += $infotime
             } else {
-                $output += ": "
-            }
-        }
-
-        $output += "$($line["content"])"
-
-        if ($img) {
-            if (-not $stripansi) {
-                # move cursor to right of image
-                $output = "$e[$(2 + $COLUMNS + $GAP)G$output"
-            } else {
-                # write image progressively
-                $imgline = ("$($img[$writtenLines])"  -replace $ansiRegex, "").PadRight($COLUMNS)
-                $output = " $imgline   $output"
-            }
-        }
-
-        $writtenLines++
-
-        if ($stripansi) {
-            $output = $output -replace $ansiRegex, ""
-            if ($output.Length -gt $freeSpace) {
-                $output = $output.Substring(0, $output.Length - ($output.Length - $freeSpace))
+                $info = & "info_$item"
             }
         } else {
-            $output = truncate_line $output $freeSpace
+            $info = @{ title = "$e[31mfunction 'info_$item' not found" }
         }
-
-        Write-Output $output
+    
+        if (-not $info) {
+            continue
+        }
+    
+        # this doesn't need to be cast as an array for foreach to work on a single object
+        <# if ($info -isnot [array]) {
+            $info = @($info)
+        } #>
+    
+        foreach ($line in $info) {
+            $output = "$e[1;33m$($line["title"])$e[0m"
+    
+            if ($line["title"] -and $line["content"]) {
+                if($timed) {
+                    $output = "$e[90m($e[37m{0:n3}$e[96ms$e[90m){1}: " -f $infotime.TotalSeconds, $output
+                } else {
+                    $output += ": "
+                }
+            }
+    
+            $output += "$($line["content"])"
+    
+            if ($img) {
+                if (-not $stripansi) {
+                    # move cursor to right of image
+                    $output = "$e[$(2 + $COLUMNS + $GAP)G$output"
+                } else {
+                    # write image progressively
+                    $imgline = ("$($img[$writtenLines])"  -replace $ansiRegex, "").PadRight($COLUMNS)
+                    $output = " $imgline   $output"
+                }
+            }
+    
+            $writtenLines++
+    
+            if ($stripansi) {
+                $output = $output -replace $ansiRegex, ""
+                if ($output.Length -gt $freeSpace) {
+                    $output = $output.Substring(0, $output.Length - ($output.Length - $freeSpace))
+                }
+            } else {
+                $output = truncate_line $output $freeSpace
+            }
+    
+            Write-Output $output
+        }
     }
 }
 

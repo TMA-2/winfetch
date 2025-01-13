@@ -427,12 +427,13 @@ function info_locale_reg {
 # <<===================<< Locale (.NET)
 # TODO: Compare performance of methods
 function info_locale_net {
-    $Culture = Get-Culture
-    # $Culture = [System.Globalization.CultureInfo]::CurrentCulture
-    $RegionInfo = [System.Globalization.RegionInfo]::CurrentRegion
+    $RegionInfo = [System.Globalization.RegionInfo]::CurrentRegion.DisplayName
+    Get-ItemPropertyValue -Path 'HKCU:Control Panel\International\User Profile' -Name Languages | ForEach-Object {
+        $CultureInfo += " - "+[cultureinfo]::GetCultureInfo($_).DisplayName
+    }
     return @{
-        title   = 'Locale (Ex)'
-        content = "$($RegionInfo.DisplayName), $($Culture.DisplayName)"
+        title   = 'Locale'
+        content = "${RegionInfo}${CultureInfo}"
     }
 }
 # <<===================<< Timezone
@@ -454,17 +455,60 @@ function info_timezone_wmi {
         content = $TimeZone.Caption
     }
 }
+# <<===================<< CPU
+function info_cpu {
+    $cpu = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey('LocalMachine', $Env:COMPUTERNAME).OpenSubKey("HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+    $cpuname = $cpu.GetValue("ProcessorNameString")
+    $cpuname = if ($cpuname.Contains('@')) {
+        ($cpuname -Split '@')[0].Trim()
+    } else {
+        $cpuname.Trim()
+    }
+    return @{
+        title   = "CPU"
+        content = "$cpuname @ $($cpu.GetValue("~MHz") / 1000)GHz"
+    }
+}
+function info_cpu_ex { # ~0.5ms faster
+    $cpuinfo = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Default').OpenSubKey("HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+    $cpuname = $cpuinfo.GetValue('ProcessorNameString').Split('@')[0].Trim()
+    $cpuspeed = $cpuinfo.GetValue('~MHz') / 1000
+
+    return @{
+        title   = "CPU"
+        content = "{0} @ {1:n2}GHz" -f $cpuname, $cpuspeed
+    }
+}
 #endregion: winfetch test functions
 
-function measure_commands {
+function test_job_thread {
+    $FunctionName = 'locale_net'
+    $FuncBlock = [scriptblock]::Create('${function:'+'info_'+$FuncName+'}')
+    $TestJob = Start-ThreadJob -Name $FunctionName -ScriptBlock {
+        Param($Name)
+        & $Name
+    } -ArgumentList $FuncBlock
+
+    $JobOutput | Wait-Job
+
+    if($TestJob.Output.Count -gt 0 -or $TestJob.State -eq 'Completed') {
+        $JobOutput = $TestJob.Output
+        $JobOutput | Remove-Job
+        Return $JobOutput
+    }
+}
+
+function measure_wf_commands {
     Param(
         $Cmds = @(
-            'info_resolution_net' #  1.81 avg
-            'info_resolution_wmi' # 74.67 avg
-            'info_locale_net'     #  0.52 avg
-            'info_locale_reg'     #  4.82 avg
-            'info_timezone_net'   #  2.05 avg
-            'info_timezone_wmi'   # 11.20 avg
+            'info_resolution_net'   #  1.81 avg
+            'info_resolution_wmi'   # 74.67 avg
+            'info_locale_net'       #  0.52 avg
+            'info_locale_reg'       #  4.82 avg
+            'info_timezone_net'     #  2.05 avg
+            'info_timezone_wmi'     # 11.20 avg
+            'info_cpu'              #  1.03 avg, 0.15 - 8.14
+            'info_cpu_ex'           #  0.60 avg, 0.09 - 4.91
         )
     )
     # info_resolution_net # 391, 17, 11, 1
@@ -480,7 +524,7 @@ function measure_commands {
     # Iterate through each command in $Cmds
     foreach ($cmd in $Cmds) {
         # Initialize variables to store total execution time and output
-        $totalExecutionTime = 0
+        $totalExecutionTime = @()
         $output = $null
     
         # Run each command 10 times
@@ -492,17 +536,22 @@ function measure_commands {
         }
     
         # Calculate the average execution time
-        $averageExecutionTime = $totalExecutionTime / 10
+        $averageExecutionTime = $totalExecutionTime | Measure-Object -Average | Select-Object -ExpandProperty Average
+        $maxExecutionTime = $totalExecutionTime | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum
+        $minExecutionTime = $totalExecutionTime | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
     
         # Store the output and average execution time in the results array
         $results += [pscustomobject]@{
-            Command       = $cmd
-            Output        = $output.content
-            ExecutionTime = [math]::Round($averageExecutionTime, 2)
+            Command     = $cmd
+            Output      = $output.content
+            AvgTime     = [math]::Round($averageExecutionTime, 2)
+            MaxTime     = [math]::Round($maxExecutionTime, 2)
+            MinTime     = [math]::Round($minExecutionTime, 2)
         }
     }
+
+    $cimSession | Remove-CimSession
+
     # Output the results
     $results
 }
-
-$cimSession | Remove-CimSession

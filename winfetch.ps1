@@ -706,10 +706,10 @@ function info_terminal {
     $terminal = switch ($parent.ProcessName) {
         { $PSItem -in 'explorer', 'conhost' } { 'Windows Console' }
         'Console' { 'Console2/Z' }
-        'ConEmuC64' { 'ConEmu' }
-        'WindowsTerminal' { 'Windows Terminal' }
+        'ConEmuC64' { 'ConEmu' } # No sixel
+        'WindowsTerminal' { 'Windows Terminal' } # Sixel support from Preview 1.22
         'FluentTerminal.SystemTray' { 'Fluent Terminal' }
-        'Code' { 'Visual Studio Code' }
+        'Code' { 'Visual Studio Code' } # Supports sixel
         # %ProgramFiles%\Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.exe
         # %ProgramFiles%\Microsoft Visual Studio\2022\Community\Common7\ServiceHub\Hosts\ServiceHub.Host.dotnet.x64\ServiceHub.Host.dotnet.x64.exe
         {$PSItem -in 'devenv','ServiceHub.Host.dotnet.x64'} {
@@ -860,7 +860,7 @@ function info_pwsh {
     }
 }
 
-
+# TODO: Improve speed over ~6s
 # ===== POWERSHELL PACKAGES =====
 function info_ps_pkgs {
     $ps_pkgs = @()

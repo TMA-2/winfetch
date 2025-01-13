@@ -288,7 +288,7 @@ if (-not $config -or $all) {
         "disk"
         "battery"
         "locale"
-        "localeex"
+        "locale_ex"
         "timezone"
         "weather"
         "local_ip"
@@ -1392,13 +1392,24 @@ function info_locale {
 
 # ===== LOCALE (EX) =====
 # Performance improvement is ~10ms over the large hashtable and registry lookup
-function info_localeex {
-    # $Culture = Get-Culture
-    $Culture = [System.Globalization.CultureInfo]::CurrentCulture
-    $RegionInfo = [System.Globalization.RegionInfo]::CurrentRegion
+function info_locale_ex {
+    $RegionInfo = [System.Globalization.RegionInfo]::CurrentRegion.DisplayName
+    (Get-ItemProperty -Path 'HKCU:\Control Panel\International\User Profile').Languages | ForEach-Object {
+        # Retrieve the language name from CultureInfo
+        $languagecode = $_
+        try {
+            # Cross-reference the language code with the CultureInfo DisplayName
+            $languagename = [System.Globalization.CultureInfo]::GetCultureInfo($languagecode).DisplayName
+            $Languages += " - $languagename"
+        } catch {
+            # if not found, just display the code
+            $Languages += " - $languagecode"
+        }
+    }
+
     return @{
-        title   = "Locale (Extended)"
-        content = "$($RegionInfo.DisplayName), $($Culture.DisplayName)"
+        title   = "Locale"
+        content = "${RegionInfo}${Languages}"
     }
 }
 

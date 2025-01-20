@@ -2,10 +2,13 @@
 
 <br />
 <p align="center">
-<img alt="GitHub code size in bytes" src="https://img.shields.io/github/languages/code-size/lptstr/winfetch.svg">
-<img alt="GitHub license" src="https://img.shields.io/github/license/lptstr/winfetch.svg">
-<img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/lptstr/winfetch.svg">
-<img alt="Made with: Wordpad" src="https://img.shields.io/badge/made%20with-wordpad-blue.svg">
+<img alt="GitHub code size in bytes" src="https://img.shields.io/github/languages/code-size/TMA-2/winfetch">
+<img alt="GitHub file size in bytes" src="https://img.shields.io/github/size/TMA-2/winfetch/winfetch.ps1">
+<img alt="GitHub Top Language" src="https://img.shields.io/github/languages/top/TMA-2/winfetch">
+<br/>
+<img alt="GitHub license" src="https://img.shields.io/github/license/TMA-2/winfetch">
+<img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/TMA-2/winfetch">
+<img alt="Made with: VS Code" src="https://img.shields.io/badge/made%20with-VSCode-blue">
 </p>
 
 <br />

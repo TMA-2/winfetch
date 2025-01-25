@@ -3,11 +3,86 @@
 #   i.e. Terminal (0.35ms): Windows Terminal
 #   $cmdtime = Measure-Command -Expression {$info = & "info_$item"}
 #   $info['title'] += " ($($cmdtime.TotalMilliseconds)ms):"
+# TODO: Implement `e[14t to retrieve the terminal size ([4;<Height>;<Width>t])
+#   Unfortunately the output seems to go directly to the input buffer?
+# TODO: Research sixel
+#   ref: https://github.com/teramako/SixPix.NET/blob/main/src/Sixel.Decode.cs
 
 # get CIM session for use with winfetch functions
 $cimSession = New-CimSession
 
+# Win Images from neofetch
+# "set_colors 6 7" is called first, which sets vars c1 - c4. the color is likely added to 30 and 40, making Cyan and White
+${e} = 0x1B
+$cCn = "${e}[36m"
+$cRd = "${e}[31m"
+$cGn = "${e}[32m"
+$cYw = "${e}[33m"
+$cBl = "${e}[34m"
+
+$ASCIILogos = @(
+    # ${c1}
+    Win11 = @"
+${cCn}################  ################
+################  ################
+################  ################
+################  ################
+################  ################
+################  ################
+################  ################
+
+################  ################
+################  ################
+################  ################
+################  ################
+################  ################
+################  ################
+################  ################
+"@
+    Win10 = @"
+${cCn}                                ..,
+                    ....,,:;+ccllll
+      ...,,+:;  cllllllllllllllllll
+,cclllllllllll  lllllllllllllllllll
+llllllllllllll  lllllllllllllllllll
+llllllllllllll  lllllllllllllllllll
+llllllllllllll  lllllllllllllllllll
+llllllllllllll  lllllllllllllllllll
+llllllllllllll  lllllllllllllllllll
+
+llllllllllllll  lllllllllllllllllll
+llllllllllllll  lllllllllllllllllll
+llllllllllllll  lllllllllllllllllll
+llllllllllllll  lllllllllllllllllll
+llllllllllllll  lllllllllllllllllll
+``'ccllllllllll  lllllllllllllllllll
+       ``' \\*::  :ccllllllllllllllll
+                       ````````''*::cll
+                                 ````
+"@
+    # set_colors 1 2 4 3 = red, green, yellow, blue
+    Win7 = @"
+${cRd}        ,.=:!!t3Z3z.,
+       :tt:::tt333EE3
+${cRd}       Et:::ztt33EEEL${cGn} @Ee.,      ..,
+${cRd}      ;tt:::tt333EE7${cGn} ;EEEEEEttttt33#
+${cRd}     :Et:::zt333EEQ.${cGn} `$EEEEEttttt33QL
+${cRd}     it::::tt333EEF${cGn} @EEEEEEttttt33F
+${cRd}    ;3=*^``````"*4EEV${cGn} :EEEEEEttttt33@.
+${cYw}    ,.=::::!t=., ${cRd}``${cGn} @EEEEEEtttz33QF
+${cYw}   ;::::::::zt33)${cGn}   "4EEEtttji3P*
+${cYw}  :t::::::::tt33.${cBl}:Z3z..${cGn}  ````${cBl} ,..g.
+${cYw}  i::::::::zt33F${cBl} AEEEtttt::::ztF
+${cYw} ;:::::::::t33V${cBl} ;EEEttttt::::t3
+${cYw} E::::::::zt33L${cBl} @EEEtttt::::z3F
+${cYw}{3=*^``````"*4E3)${cBl} ;EEEtttt:::::tZ``
+${cYw}             ``${cBl} :EEEEtttt::::z7
+                 "VEzjt:;;z>*``
+"@
+)
+
 # <<==================================================< winfetch test functions
+#region: Resolution
 # <<===================<< Resolution Original (.NET)
 function info_resolution_net {
     Add-Type -AssemblyName System.Windows.Forms
@@ -30,7 +105,9 @@ function info_resolution_wmi {
         content = "$($CIMResolution.CurrentHorizontalResolution)x$($CIMResolution.CurrentVerticalResolution) @ $($CIMResolution.CurrentRefreshRate)Hz"
     }
 }
-# <<===================<< Locale Original (Registry/Hashtable)
+#endregion: Resolution
+#region: Locale/Timezone
+# <<===================<< Locale
 function info_locale_reg {
     # Hashtables for language and region codes
     $localeLookup = @{
@@ -474,6 +551,9 @@ function info_timezone_wmi {
         content = $TimeZone.Caption
     }
 }
+#endregion: Locale/Timezone
+#region: CPU/RAM
+# <<===================<< CPU
 function info_cpu_reg1 {
     $CPUName = Get-ItemPropertyValue -Path 'HKLM:\HARDWARE\DESCRIPTION\System\CentralProcessor\0' -Name ProcessorNameString
     $CPUSpeed = Get-ItemPropertyValue -Path 'HKLM:\HARDWARE\DESCRIPTION\System\CentralProcessor\0' -Name '~MHz'
@@ -491,6 +571,90 @@ function info_cpu_reg2 {
         content = '{0}, {1:n2}GHz' -f $CPUName, ($CPUSpeed / 1000)
     }
 }
+#region: Resoure Usage
+# ===== CPU USAGE =====
+function info_cpu_usage {
+    # Get all running processes and assign to a variable to allow reuse
+    $processes = [System.Diagnostics.Process]::GetProcesses()
+    $loadpercent = 0
+    $proccount = $processes.Count
+    # Get the number of logical processors in the system
+    $CPUs = [System.Environment]::ProcessorCount
+
+    $timenow = [System.Datetime]::Now
+    $processes.ForEach{
+        if ($_.StartTime -gt 0) {
+            # Replicate the functionality of New-Timespan
+            $timespan = ($timenow.Subtract($_.StartTime)).TotalSeconds
+
+            # Calculate the CPU usage of the process and add to the total
+            $loadpercent += $_.CPU * 100 / $timespan / $CPUs
+        }
+    }
+
+    return @{
+        title   = "CPU Usage"
+        content = get_level_info "" $cpustyle $loadpercent "$proccount processes" -altstyle
+    }
+}
+# ===== MEMORY =====
+function info_memory {
+    $total = $os.TotalVisibleMemorySize / 1mb
+    $used = ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1mb
+    $usage = [math]::floor(($used / $total * 100))
+    return @{
+        title   = "Memory"
+        content = get_level_info "   " $memorystyle $usage "$($used.ToString("#.##")) GiB / $($total.ToString("#.##")) GiB"
+    }
+}
+# <<===================<< CPU Usage by current process
+function info_cpu_usage_proc {
+    $proc = [System.Diagnostics.Process]::GetProcessById($PID)
+    $cpus = [System.Environment]::ProcessorCount
+    $dtnow = [datetime]::Now
+    $procload = $proc.CPU * 100 / ($dtnow.Subtract($proc.StartTime)).TotalSeconds / $cpus
+    return @{
+        title   = "$($proc.Name) CPU"
+        content = "{0,n2}%" -f $procload
+    }
+}
+# <<===================<< RAM Usage by current
+function info_memory_usage_proc {
+    $total = (gcim Win32_OperatingSystem -CimSession $cimSession).TotalVisibleMemorySize / 1MB
+    $proc = [System.Diagnostics.Process]::GetProcessById($PID)
+    $used = $proc.PrivateMemorySize64 / 1MB
+    $usage = [math]::Floor($total / $used * 100)
+    return @{
+        title   = "$($proc.Name) RAM"
+        content = "{0}% - {1} MiB / {2} GiB" -f $usage, $used.ToString("#.##"), $total.ToString("#.##")
+    }
+}
+#endregion: Resource Usage
+#endregion: CPU/RAM
+
+function public_ip {
+    Param(
+        [ValidateSet('identme', 'icanhazip', 'ifconfigme', 'ifconfigco', 'ipecho', 'myexternalip')]
+        [string]$Source = 'identme'
+    )
+    switch ($Source) {
+        'identme' { $src = 'http://ident.me' }
+        'icanhazip' { $src = 'http://icanhazip.com' }
+        'ifconfigme' { $src = 'http://ifconfig.me/ip' }
+        'ipecho' { $src = 'http://ipecho.net/plain' }
+        'whatismyipaddress' { $src = 'http://bot.whatismyipaddress.com' <#404#>}
+        'myexternalip' { $src = 'http://myexternalip.com/raw' }
+        'ifconfigco' { $src = 'http://ifconfig.co/ip' <#1 request/min#>}
+        'ipify' { $src = 'http://api.ipify.org' <#Requires API key#>}
+    }
+    $ip = Invoke-RestMethod -Uri $src
+    return @{
+        title   = 'Public IP'
+        content = $ip
+    }
+}
+
+#region: colorbar
 function info_colorbar {
     return @(
         @{
@@ -506,28 +670,29 @@ function info_colorbar {
 function info_colorbar_gen {
     $ColorsBG = 40..47
     $ColorsBG2 = 100..107
-    $Content1 = ''
-    $Content2 = ''
+    $Line1 = ''
+    $Line2 = ''
     for ($i = $ColorsBG[0]; $i -lt $ColorsBG[-1]; $i++) {
-        $Content1 += "${e}[0;${i}m   "
+        $Line1 += "${e}[0;${i}m   "
     }
-    $Content1 += "${e}[0m"
+    $Line1 += "${e}[0m"
     for ($i = $ColorsBG2[0]; $i -lt $ColorsBG2[-1]; $i++) {
-        $Content2 += "${e}[0;${i}m   "
+        $Line2 += "${e}[0;${i}m   "
     }
-    $Content2 += "${e}[0m"
+    $Line2 += "${e}[0m"
     $Return = @(
         @{
             title   = ''
-            content = $Content1
+            content = $Line1
         },
         @{
             title   = ''
-            content = $Content2
+            content = $Line2
         }
     )
     return $Return
 }
+#endregion: colorbar
 
 # PSPT Profile: 391ms vs 478ms, 17 vs 91
 # Measure: 11 vs 55, 1 vs. 202
@@ -551,39 +716,44 @@ $config = @(
     'timezone_wmi'   # 11.20 avg
     'cpu_reg1'
     'cpu_reg2'
-    'colorbar'
-    'colorbar_gen'
+    'cpu_usage'
+    'memory'
+    'cpu_usage_proc'
+    'memory_usage_proc'
 )
 # item = individual function name
 # output = function result
 # results = Command = item, Output = output, Time = execution time
 
-function test-main {
+function winfetch_test([string[]]$Funcs = $config, [int]$Repeat = 10) {
     # Initialize an array to store the results
     $results = @()
     
     # Iterate through each command in $Cmds
-    foreach ($item in $config) {
+    foreach ($item in $Funcs) {
         # Initialize variables to store total execution time and output
-        $totalExecutionTime = 0
+        $totalExecutionTime = [int[]]@()
         $output = $null
     
         # Run each command 10 times
-        for ($i = 0; $i -lt 10; $i++) {
+        for ($i = 0; $i -lt $Repeat; $i++) {
             $executionTime = Measure-Command {
                 $output = & "info_$item"
             }
-            $totalExecutionTime += $executionTime.TotalMilliseconds
+            $totalExecutionTime += $executionTime.TotalSeconds
         }
     
         # Calculate the average execution time
-        $averageExecutionTime = $totalExecutionTime / 10
+        $ExecutionTimes = $totalExecutionTime | Measure-Object
     
         # Store the output and average execution time in the results array
         $results += [pscustomobject]@{
-            Command       = $cmd
-            Output        = $output.content
-            ExecutionTime = [math]::Round($averageExecutionTime, 2)
+            Command     = $item
+            Output      = $output.content
+            TotalTime   = [math]::Round($ExecutionTimes.Sum, 3)
+            AverageTime = [math]::Round($ExecutionTimes.Average, 3)
+            MinimumTime = [math]::Round($ExecutionTimes.Minimum, 3)
+            MaximumTime = [math]::Round($ExecutionTimes.Maximum, 3)
         }
     }
     
@@ -596,28 +766,37 @@ function test-main {
 # NOTE: Dynamic function call works by passing the function name as a string and expanding with iex
 # BUG: But... because the function has to be re-defined, it likely isn't a net performance gain
 # $Functionname = 'info_timezone_net'
-$jobtest = Start-Job -Name 'info_test' -ArgumentList $(Invoke-Expression "`$function:$Functionname") -ScriptBlock { param($func) Invoke-Expression $func }
+# $jobtest = Start-Job -Name 'info_test' -ArgumentList $(Invoke-Expression "`$function:$Functionname") -ScriptBlock { param($func) Invoke-Expression $func }
 
-function test-mta {
+function winfetch_test_mta {
+    Param(
+        [string[]]$Funcs = $config,
+        [switch]$Threaded
+    )
+
     $results = @()
 
-    # run each command in a separate thread
-    foreach ($item in $config) {
+    # run each command in a separate job
+    foreach ($item in $Funcs) {
         $funcname = "info_$item"
         $splat = @{
             Name          = $funcname
-            ArgumentList  = $(Invoke-Expression "`$function:$funcname")
+            ArgumentList  = (gcm $funcname).Definition
             ScriptBlock   = {
                 param($func)
-                Invoke-Expression $func
+                iex $func
             }
-            ThrottleLimit = 5
+            # ThrottleLimit = 5
         }
-        if(Test-Path $funcname) {
-            $ThreadJob = Start-ThreadJob @splat
+        if(Test-Path function:$funcname) {
+            if($Threaded) {
+                $jobs += Start-ThreadJob @splat
+            } else {
+                $jobs += Start-Job @splat
+            }
         } else {
             $results += [pscustomobject]@{
-                Command       = "$e[31mfunction '$funcname' not found"
+                Command       = "'$funcname' not found"
                 Output        = $null
                 ExecutionTime = 0
             }
@@ -625,27 +804,59 @@ function test-mta {
     }
     
     # Wait for all jobs to complete
-    $jobs = Get-Job -Name info_*
-    $jobs | Wait-Job
+    # $jobs = Get-Job -Name info_*
+    $jobs | Wait-Job | Out-Null
 
     # Process each job result
     foreach ($job in $jobs) {
-        $infotime = $job.PSEndTime.Value - $job.PSBeginTime.Value
-        $timetotal += $infotime
-        $info = Receive-Job -Job $job
-        Remove-Job -Job $job
+        $infotime = $job.PSEndTime - $job.PSBeginTime
+        $timetotal += $infotime.TotalSeconds
+        $info = $job | Receive-Job
 
         # Calculate the average execution time
-        $averageExecutionTime = $timetotal / 10
+        $ExecutionTime = $infotime | Measure-Object -AllStats
     
         # Store the output and average execution time in the results array
         $results += [pscustomobject]@{
-            Command       = $cmd
+            Command       = $job.Name
             Output        = $info
-            ExecutionTime = [math]::Round($averageExecutionTime, 2)
+            TotalTime     = [math]::Round($infotime.TotalSeconds, 3)
+            AverageTime   = [math]::Round($ExecutionTime.Average, 3)
+            MinimumTime   = [math]::Round($ExecutionTime.Minimum, 3)
+            MaximumTime   = [math]::Round($ExecutionTime.Maximum, 3)
         }
     }
+
+    "Total time: {0:n3}" -f $timetotal.TotalSeconds | Write-Host
+
+    # Remove-Job -Job $jobs
     $results
 }
+
+function winfetch_test_job {
+    Param(
+        [string[]]$JobNames = $config
+    )
+
+    $JobOutput = @()
+
+    foreach($func in $JobNames) {
+        $FuncName = "info_$func"
+        $FuncBlock = (gcm $FuncName).Definition
+        $TestJob += Start-ThreadJob -Name $FuncName -ArgumentList $FuncBlock -ScriptBlock {
+            Param($Name)
+            iex $Name
+        }
+    }
+
+    # $TestJob = Get-Job -Name info_*
+    $TestJob | Wait-Job | Out-Null
+
+    # if($TestJob.Output.Count -gt 0 -or $TestJob.State -eq 'Completed') {
+    $JobOutput += $TestJob | Receive-Job
+    Return $JobOutput
+}
+
+winfetch_test_mta
 
 $cimSession | Remove-CimSession

@@ -1,6 +1,5 @@
 ﻿#!/usr/bin/env -S pwsh -nop
 #requires -version 5
-#requires -Modules ThreadJob
 
 # (!) This file must to be saved in UTF-8 with BOM encoding in order to work with legacy Powershell 5.x
 
@@ -45,6 +44,16 @@
     Make the logo blink.
 .PARAMETER stripansi
     Output without any text effects or colors.
+.PARAMETER sixel
+    Output image using sixel format.
+    Not yet implemented!
+.PARAMETER timed
+    Display the time taken to output each element along with the overhead and total.
+.PARAMETER multithreaded
+    Use multithreading to run slower functions together like ps_pkgs and pkgs.
+    Not yet implemented!
+.PARAMETER nooutput
+    Hide all output — only load functions for individual use.
 .PARAMETER all
     Display all built-in info segments.
 .PARAMETER help
@@ -84,6 +93,8 @@ param(
     [Parameter(DontShow)][switch][alias('x')]$sixel,
     [switch][alias('e')]$timed,
     [switch][alias('m')]$multithreaded,
+    # dynamically fit info_dashes to the previous line
+    [switch][alias('d')]$fitdashes,
     # loads functions but does not output anything
     [switch][alias('n')]$nooutput,
     [switch][alias('a')]$all,
@@ -142,7 +153,7 @@ $defaultConfig = @'
 # This should be an array of strings, with positive
 # height and width equal to $imgwidth defined above.
 # $CustomAscii = @(
-#     "       ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣾⣿⣦⠀  "
+#     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣾⣿⣦⠀  "
 #     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣶⣶⣾⣷⣶⣆⠸⣿⣿⡟⠀  "
 #     "⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣷⡈⠻⠿⠟⠻⠿⢿⣷⣤⣤⣄⠀⠀  "
 #     "⠀⠀⠀⠀⠀⠀⠀⣴⣿⣿⠟⠁⠀⠀⠀⠀⠀⠀⠈⠻⣿⣿⣦⠀  "
@@ -190,15 +201,14 @@ $defaultConfig = @'
 # }
 
 # Configure how to show info for levels
-# Default is for text only.
-# 'bar' is for bar only.
-# 'textbar' is for text + bar.
-# 'bartext' is for bar + text.
+# Default is for text only, i.e.    CPU Usage: 253 processes
+# 'bar' is for bar only, i.e.       Memory: [ ■■■■------ ]
+# 'bartext' is for bar + text, i.e. Memory: [ ■■■■------ ] 7.17 GiB / 16 GiB
+# 'textbar' is for text + bar, i.e. CPU Usage: 297 processes [ ■■■------- ]
 # $cpustyle = 'bar'
 # $memorystyle = 'textbar'
 # $diskstyle = 'bartext'
 # $batterystyle = 'bartext'
-
 
 # Remove the '#' from any of the lines in
 # the following to **enable** their output.
@@ -224,7 +234,7 @@ $defaultConfig = @'
     "memory"
     "disk"
     # "battery"
-    # "locale"
+    "locale"
     # "timezone"
     # "weather"
     # "local_ip"
@@ -288,7 +298,6 @@ if (-not $config -or $all) {
         "disk"
         "battery"
         "locale"
-        "locale_ex"
         "timezone"
         "weather"
         "local_ip"
@@ -309,21 +318,21 @@ foreach ($param in $PSBoundParameters.Keys) {
 #region: Variables
 $e = [char]0x1B
 $t = if ($blink) { "5" } else { "1" }
-$ansiRegex = '([\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-ntqry=><~])))'
+$script:ansiRegex = '([\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-ntqry=><~])))'
 $cimSession = New-CimSession
 $os = Get-CimInstance -ClassName Win32_OperatingSystem -Property Caption, OSArchitecture, LastBootUpTime, TotalVisibleMemorySize, FreePhysicalMemory -CimSession $cimSession
-$COLUMNS = $imgwidth
+$script:COLUMNS = $imgwidth
 
 # ===== UPDATE PROCESS TYPE FOR 5.1 =====
 # NOTE: Approx. 100ms added
 if ($PSEdition -eq 'Desktop') {
     # .NET Core contains Parent and CommandLine properties, but not Desktop. This adds them, albeit more slowly, as it must query WMI for each process.
-    # Add _CIMSession property to System.Diagnostics.Process to more quickly retrieve remote properties
-    Update-TypeData -MemberType ScriptProperty -MemberName _CIMInstance -TypeName 'System.Diagnostics.Process' -Value { try { Get-CimInstance -CimSession $cimSession -ClassName Win32_Process -Filter "ProcessId = '$($this.Id)'" -ComputerName $this.MachineName } catch { $_ } } -Force
+    # _CIMInstance property is first added to more quickly retrieve other properties
+    Update-TypeData -MemberType ScriptProperty -MemberName _CIMInstance -TypeName 'System.Diagnostics.Process' -Value { try { Get-CimInstance -CimSession $cimSession -ClassName Win32_Process -Filter "ProcessId = '$($this.Id)'" } catch { $_ } } -Force
     # Add ParentProcessId pulled from Win32_Process
     Update-TypeData -MemberType ScriptProperty -MemberName ParentProcessId -TypeName 'System.Diagnostics.Process' -Value { try { ($this._CIMInstance).ParentProcessId } catch { $_ } } -Force
     # Finally, get the actual Process object for the Parent
-    Update-TypeData -MemberType ScriptProperty -MemberName Parent -TypeName 'System.Diagnostics.Process' -Value { try { Get-Process -Id $this.ParentProcessId -ComputerName $this.MachineName } catch { $_ } } -Force
+    Update-TypeData -MemberType ScriptProperty -MemberName Parent -TypeName 'System.Diagnostics.Process' -Value { try { Get-Process -Id $this.ParentProcessId } catch { $_ } } -Force
     # Add CommandLine pulled from Win32_Process
     # Update-TypeData -MemberType ScriptProperty -MemberName CommandLine -TypeName 'System.Diagnostics.Process' -Value {try{($this._CIMInstance).CommandLine}catch{$_}} -Force
 }
@@ -398,9 +407,50 @@ function truncate_line {
 
     return $trucatedOutput
 }
+
+function write_output($lines, $time) {
+    foreach ($line in $lines) {
+        $output = "$e[1;33m$($line["title"])$e[0m"
+
+        if ($line["title"] -and $line["content"]) {
+            if ($timed) {
+                $output = "$e[90m($e[37m{0:n3}$e[96ms$e[90m){1}: " -f $time.TotalSeconds, $output
+            } else {
+                $output += ": "
+            }
+        }
+
+        $output += "$($line["content"])"
+
+        if ($img) {
+            if (-not $stripansi) {
+                # move cursor to right of image
+                $output = "$e[$(2 + $script:COLUMNS + $script:GAP)G$output"
+            } else {
+                # write image progressively
+                $imgline = ("$($img[$script:writtenLines])" -replace $script:ansiRegex).PadRight($script:COLUMNS)
+                $output = " $imgline   $output"
+            }
+        }
+
+        $script:writtenLines++
+
+        if ($stripansi) {
+            $output = $output -replace $script:ansiRegex
+            if ($output.Length -gt $script:freeSpace) {
+                $output = $output.Substring(0, $output.Length - ($output.Length - $script:freeSpace))
+            }
+        } else {
+            $output = truncate_line $output $script:freeSpace
+        }
+
+        Write-Output $output
+    }
+}
 #endregion: Utility Functions
 
 # ===== IMAGE =====
+# TODO: Refactor
 #region: Image
 $img = if (-not $noimage -and -not $nooutput) {
     if ($image) {
@@ -635,8 +685,12 @@ function info_title {
 
 
 # ===== DASHES =====
-function info_dashes {
-    $length = [System.Environment]::UserName.Length + $env:COMPUTERNAME.Length + 1
+function info_dashes([int]$width) {
+    if($width) {
+        $length = $width
+    } else {
+        $length = [System.Environment]::UserName.Length + $env:COMPUTERNAME.Length + 1
+    }
     return @{
         title   = ""
         content = "-" * $length
@@ -990,7 +1044,7 @@ function info_battery {
 
 
 # ===== LOCALE =====
-function info_locale {
+function info_locale_old {
     # Hashtables for language and region codes
     $localeLookup = @{
         '10'        = 'American Samoa';            '100'       = 'Guinea';                    '10026358'  = 'Americas';
@@ -1390,9 +1444,9 @@ function info_locale {
     }
 }
 
-# ===== LOCALE (EX) =====
+# ===== LOCALE =====
 # Performance improvement is ~10ms over the large hashtable and registry lookup
-function info_locale_ex {
+function info_locale {
     $RegionInfo = [System.Globalization.RegionInfo]::CurrentRegion.DisplayName
     (Get-ItemProperty -Path 'HKCU:\Control Panel\International\User Profile').Languages | ForEach-Object {
         # Retrieve the language name from CultureInfo
@@ -1417,11 +1471,10 @@ function info_locale_ex {
 function info_timezone {
     # ID = Timezone
     # DisplayName = (UTC-/+xxx) Timezone (Region)
-    # $TimeZone = Get-TimeZone
-    $TimeZone = [System.TimeZoneInfo]::Local
+    $TimeZone = [System.TimeZoneInfo]::Local.DisplayName
     return @{
         title   = "Timezone"
-        content = $TimeZone.DisplayName
+        content = $TimeZone
     }
 }
 
@@ -1503,103 +1556,121 @@ if(!$nooutput) {
         }
     }
     
-    $GAP = 3
-    $writtenLines = 0
-    $freeSpace = $Host.UI.RawUI.WindowSize.Width - 1
+    $script:GAP = 3
+    $script:writtenLines = 0
+    $script:freeSpace = $Host.UI.RawUI.WindowSize.Width - 1
     
     # move cursor to top of image and to its right
+    # see: https://espterm.github.io/docs/VT100%20escape%20codes.html
+    # TODO: ^[D to move/scroll window up one line * ($img.Length - [Console]::WindowHeight)
+    # [console]::MoveBufferArea(0, 0, $COLUMNS, $img.Length, 0, 1) # Scroll image up
+    <# int sourceLeft, # leftmost column of source area
+        int sourceTop, # topmost row of source area
+        int sourceWidth, # number of columns in source area
+        int sourceHeight, # number of rows in source area
+        int targetLeft, # leftmost column of the destination
+        int targetTop # topmost row of the column)
+    #>
     if ($img -and -not $stripansi) {
+        # Columns = image width + 1
+        <#
+        $img $GAP Info(Title: Content)
+        $img $GAP Info(Title: Content)
+        $img $GAP Info(Title: Content)
+        #>
         $freeSpace -= 1 + $COLUMNS + $GAP
-        Write-Output "$e[$($img.Length + 1)A"
+        Write-Output "$e[$($img.Length + 1)A" # Move cursor up N lines
     }
     
     # BUG: script functions are not recognized in Job scriptblocks unless the definition is passed in ArgumentList or InitializationScript
     if ($multithreaded) {
         # create thread jobs for each function
         foreach ($item in $config) {
-            $splat = @{
-                Name          = "info_$item"
-                ScriptBlock   = {
-                    if (Test-Path Function:"info_$item") {
-                        & "info_$item"
-                    } else {
-                        @{ title = "$e[31mfunction 'info_$item' not found" }
+            $FuncName = "info_$item"
+            if(Test-Path Function:$FuncName) {
+                $splat = @{
+                    Name          = "winfetch-$item"
+                    ScriptBlock   = {
+                        Param($Func, $PkgFuncs)
+
+                        if($PkgFuncs) {
+                            foreach ($PkgFunc in $PkgFuncs) {
+                                Invoke-Expression $PkgFunc
+                            }
+                        }
+
+                        Invoke-Expression $Func
                     }
+                    ArgumentList  = (Get-Command $FuncName).Definition
+                    # ThrottleLimit = 5
                 }
-                ThrottleLimit = 5
+                # Load custom package functions to pass to job
+                if($item -eq "pkgs") {
+                    $CustomPkgDefs = @()
+                    foreach ($pkgitem in $CustomPkgs) {
+                        if (Test-Path Function:"info_pkg_$pkgitem") {
+                            $CustomPkgDefs += (gcm "info_pkg_$pkgitem").Definition
+                        }
+                    }
+                    $splat.ArgumentList += $CustomPkgDefs
+                }
+            } else {
+                $splat = @{
+                    Name          = "winfetch-$item"
+                    ScriptBlock   = { Return @{title = "$([char]0x1B)[31mfunction '$using:FuncName' not found"} }
+                }
             }
-            $ThreadJob = Start-ThreadJob @splat
+            
+            $jobs = Start-Job @splat
         }
         
         # Wait for all jobs to complete
-        $jobs = Get-Job
-        $jobs | Wait-Job
+        $jobs | Wait-Job | Out-Null
     
         # Process each job result
         foreach ($job in $jobs) {
-            $infotime = $job.PSEndTime.Value - $job.PSBeginTime.Value
+            $infotime = $job.PSEndTime - $job.PSBeginTime
             $timetotal += $infotime
-            $info = Receive-Job -Job $job
-            Remove-Job -Job $job
+            $info = $job | Receive-Job
         
             if (-not $info) {
                 continue
             }
         
-            foreach ($line in $info) {
-                $output = "$e[1;33m$($line["title"])$e[0m"
-        
-                if ($line["title"] -and $line["content"]) {
-                    if ($timed) {
-                        $output = "$e[90m($e[37m{0:n3}$e[96ms$e[90m){1}: " -f $infotime.TotalSeconds, $output
-                    } else {
-                        $output += ": "
-                    }
-                }
-        
-                $output += "$($line["content"])"
-        
-                if ($img) {
-                    if (-not $stripansi) {
-                        # move cursor to right of image
-                        $output = "$e[$(2 + $COLUMNS + $GAP)G$output"
-                    } else {
-                        # write image progressively
-                        $imgline = ("$($img[$writtenLines])" -replace $ansiRegex, "").PadRight($COLUMNS)
-                        $output = " $imgline   $output"
-                    }
-                }
-        
-                $writtenLines++
-        
-                if ($stripansi) {
-                    $output = $output -replace $ansiRegex, ""
-                    if ($output.Length -gt $freeSpace) {
-                        $output = $output.Substring(0, $output.Length - ($output.Length - $freeSpace))
-                    }
-                } else {
-                    $output = truncate_line $output $freeSpace
-                }
-        
-                Write-Output $output
-            }
+            write_output -lines $info -time $infotime
         }
     } else {
         # write info
         foreach ($item in $config) {
             if (Test-Path Function:"info_$item") {
                 if ($timed) {
-                    $infotime = Measure-Command { $info = & "info_$item" }
+                    if($fitdashes -and $item -eq 'dashes' -and $lastwidth -gt 0) {
+                        # fit dashes to last item's length
+                        $infotime = Measure-Command { $info = & "info_$item" $lastwidth }
+                    } else {
+                        $infotime = Measure-Command { $info = & "info_$item" }
+                    }
                     $timetotal += $infotime
                 } else {
-                    $info = & "info_$item"
+                    if($fitdashes -and $item -eq 'dashes' -and $lastwidth -gt 0) {
+                        # fit dashes to last item's length
+                        $info = & "info_$item" $lastwidth
+                    } else {
+                        $info = & "info_$item"
+                    }
                 }
             } else {
                 $info = @{ title = "$e[31mfunction 'info_$item' not found" }
             }
-        
+            
             if (-not $info) {
                 continue
+            } else {
+                # measure the length of the title and content
+                $lastwidth = ($info.title -replace $script:ansiRegex).Length
+                if($info.ContainsKey('content')) {
+                    $lastwidth += ($info.Content -replace $script:ansiRegex).Length + 2
+                }
             }
         
             # this doesn't need to be cast as an array for foreach to work on a single object
@@ -1607,50 +1678,14 @@ if(!$nooutput) {
                 $info = @($info)
             } #>
         
-            foreach ($line in $info) {
-                $output = "$e[1;33m$($line["title"])$e[0m"
-        
-                if ($line["title"] -and $line["content"]) {
-                    if ($timed) {
-                        $output = "$e[90m($e[37m{0:n3}$e[96ms$e[90m){1}: " -f $infotime.TotalSeconds, $output
-                    } else {
-                        $output += ": "
-                    }
-                }
-        
-                $output += "$($line["content"])"
-        
-                if ($img) {
-                    if (-not $stripansi) {
-                        # move cursor to right of image
-                        $output = "$e[$(2 + $COLUMNS + $GAP)G$output"
-                    } else {
-                        # write image progressively
-                        $imgline = ("$($img[$writtenLines])" -replace $ansiRegex, "").PadRight($COLUMNS)
-                        $output = " $imgline   $output"
-                    }
-                }
-        
-                $writtenLines++
-        
-                if ($stripansi) {
-                    $output = $output -replace $ansiRegex, ""
-                    if ($output.Length -gt $freeSpace) {
-                        $output = $output.Substring(0, $output.Length - ($output.Length - $freeSpace))
-                    }
-                } else {
-                    $output = truncate_line $output $freeSpace
-                }
-        
-                Write-Output $output
-            }
+            write_output -lines $info -time $infotime
         }
     }
     
     if ($stripansi) {
         # write out remaining image lines
         for ($i = $writtenLines; $i -lt $img.Length; $i++) {
-            $imgline = ("$($img[$i])" -replace $ansiRegex, "").PadRight($COLUMNS)
+            $imgline = ("$($img[$i])" -replace $ansiRegex).PadRight($COLUMNS)
             Write-Output " $imgline"
         }
     }
@@ -1667,9 +1702,23 @@ if(!$nooutput) {
     } else {
         Write-Output "`n"
     }
+} else {
+    # Load each function without output
+    foreach ($item in $config) {
+        if (Test-Path Function:"info_$item") {
+            if ($timed) {
+                $infotime = Measure-Command { & "info_$item" | Out-Null }
+                $timetotal += $infotime
+            } else {
+                . "info_$item" | Out-Null
+            }
+        } else {
+            Write-Warning "Function 'info_$item' not found!"
+        }
+    }
 }
 
-if ($timed) {
+if ($timed -and !$nooutput) {
     "$e[1;33mOverhead$e[0m:   {0:n3}" -f $timeoverhead.TotalSeconds
     "$e[1;33mFunctions$e[0m:  {0:n3}" -f $timetotal.TotalSeconds
     "$e[1;33mFunc Avg$e[0m:   {0:n3}" -f ($timetotal.TotalSeconds / $writtenLines)

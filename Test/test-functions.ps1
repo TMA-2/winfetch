@@ -3,6 +3,7 @@
 #   i.e. Terminal (0.35ms): Windows Terminal
 #   $cmdtime = Measure-Command -Expression {$info = & "info_$item"}
 #   $info['title'] += " ($($cmdtime.TotalMilliseconds)ms):"
+# TODO: Add an admin check and display info_title differently
 
 # get CIM session for use with winfetch functions
 $cimSession = New-CimSession
@@ -491,6 +492,125 @@ function info_cpu_reg2 {
         content = '{0}, {1:n2}GHz' -f $CPUName, ($CPUSpeed / 1000)
     }
 }
+function info_ps_pkgs {
+    $ps_pkgs = @()
+
+    # Get all installed packages
+    $pgp = Get-Package -ProviderName PowerShellGet
+    # Get the number of packages where the tags contains PSModule or PSScript
+    $modulecount = $pgp.Where({ $_.Metadata["tags"] -like "*PSModule*" }).count
+    $scriptcount = $pgp.Where({ $_.Metadata["tags"] -like "*PSScript*" }).count
+
+    if ($modulecount) {
+        $modulestring = "$modulecount Module"
+        if ($modulecount -gt 1) { $modulestring += "s" }
+
+        $ps_pkgs += $modulestring
+    }
+
+    if ($scriptcount) {
+        $scriptstring = "$scriptcount Script"
+        if ($scriptcount -gt 1) { $scriptstring += "s" }
+
+        $ps_pkgs += $scriptstring
+    }
+
+    if (-not $ps_pkgs) {
+        $ps_pkgs = "(none)"
+    }
+
+    return @{
+        title   = "PS Packages"
+        content = $ps_pkgs -join ', '
+    }
+}
+function info_pkgs {
+    $pkgs = @()
+
+    if ("winget" -in $ShowPkgs -and (Get-Command -Name winget -ErrorAction Ignore)) {
+        $wingetpkg = (winget list | Where-Object { $_.Trim("`n`r`t`b-\|/ ").Length -ne 0 } | Measure-Object).Count - 1
+
+        if ($wingetpkg) {
+            $pkgs += "$wingetpkg (system)"
+        }
+    }
+
+    if ("choco" -in $ShowPkgs -and (Get-Command -Name choco -ErrorAction Ignore)) {
+        $chocopkg = Invoke-Expression $(
+            "(& choco list" + $(if ([version](& choco --version).Split('-')[0]`
+                        -lt [version]'2.0.0') { " --local-only" }) + ")[-1].Split(' ')[0] - 1")
+
+        if ($chocopkg) {
+            $pkgs += "$chocopkg (choco)"
+        }
+    }
+
+    if ("scoop" -in $ShowPkgs) {
+        $scoopdir = if ($Env:SCOOP) { "$Env:SCOOP\apps" } else { "$Env:UserProfile\scoop\apps" }
+
+        if (Test-Path $scoopdir) {
+            $scooppkg = (Get-ChildItem -Path $scoopdir -Directory).Count - 1
+        }
+
+        if ($scooppkg) {
+            $pkgs += "$scooppkg (scoop)"
+        }
+    }
+
+    # BUG: this won't work in separate jobs unless the functionss are passed in as arguments first
+    foreach ($pkgitem in $CustomPkgs) {
+        if (Test-Path Function:"info_pkg_$pkgitem") {
+            $count = & "info_pkg_$pkgitem"
+            $pkgs += "$count ($pkgitem)"
+        }
+    }
+
+    if (-not $pkgs) {
+        $pkgs = "(none)"
+    }
+
+    return @{
+        title   = "Packages"
+        content = $pkgs -join ', '
+    }
+}
+function info_public_ip_ifconfig {
+    # use /all.json to get more info
+    return @{
+        title   = "Public IP"
+        content = try {
+            Invoke-RestMethod -TimeoutSec 5 -Uri "https://ifconfig.me/ip"
+        } catch {
+            "$e[91m(Network Error)"
+        }
+    }
+}
+function info_public_ip_ipinfo {
+    # Unknown request limit
+    $ipinfo = try {
+            Invoke-RestMethod -TimeoutSec 5 -Uri "https://ipinfo.io/json" | select -ExpandProperty ip
+        } catch {
+            "$e[91m(Network Error)"
+        }
+    
+    return @{
+        title   = "Public IP"
+        content = $ipinfo
+    }
+}
+function info_public_ip_myip {
+    # No request limit
+    $ipinfo = try {
+            Invoke-RestMethod -TimeoutSec 5 -Uri "https://api.myip.com" | select -ExpandProperty ip
+        } catch {
+            "$e[91m(Network Error)"
+        }
+    
+    return @{
+        title   = "Public IP"
+        content = $ipinfo
+    }
+}
 function info_colorbar {
     return @(
         @{
@@ -545,31 +665,40 @@ function info_colorbar_gen {
 $config = @(
     'resolution_net' #  1.81 avg
     'resolution_wmi' # 74.67 avg
-    'locale_net'     #  0.52 avg
     'locale_reg'     #  4.82 avg
+    'locale_net'     #  0.52 avg
     'timezone_net'   #  2.05 avg
     'timezone_wmi'   # 11.20 avg
     'cpu_reg1'
     'cpu_reg2'
-    'colorbar'
-    'colorbar_gen'
+    'ps_pkgs'
+    'pkgs'
+    'public_ip_ifconfig'
+    # 'public_ip_ipinfo'
+    # 'public_ip_myip'
+    # 'colorbar'
+    # 'colorbar_gen'
 )
 # item = individual function name
 # output = function result
 # results = Command = item, Output = output, Time = execution time
 
 function test-main {
+    Param(
+        $Funcs = $config,
+        $Repeat = 10
+    )
     # Initialize an array to store the results
     $results = @()
     
     # Iterate through each command in $Cmds
-    foreach ($item in $config) {
+    foreach ($item in $Funcs) {
         # Initialize variables to store total execution time and output
-        $totalExecutionTime = 0
+        $totalExecutionTime = @()
         $output = $null
     
-        # Run each command 10 times
-        for ($i = 0; $i -lt 10; $i++) {
+        # Run each command X times
+        for ($i = 0; $i -lt $Repeat; $i++) {
             $executionTime = Measure-Command {
                 $output = & "info_$item"
             }
@@ -577,18 +706,22 @@ function test-main {
         }
     
         # Calculate the average execution time
-        $averageExecutionTime = $totalExecutionTime / 10
+        $averageExecutionTime = $totalExecutionTime | Measure-Object -AllStats
     
         # Store the output and average execution time in the results array
         $results += [pscustomobject]@{
-            Command       = $cmd
+            Command       = $item
+            Title         = $output.title
             Output        = $output.content
-            ExecutionTime = [math]::Round($averageExecutionTime, 2)
+            TotalTime     = [math]::Round($averageExecutionTime.Sum, 2)
+            AverageTime   = [math]::Round($averageExecutionTime.Average, 2)
+            MaximumTime   = [math]::Round($averageExecutionTime.Maximum, 2)
+            MinimumTime   = [math]::Round($averageExecutionTime.Minimum, 2)
         }
     }
     
     # Output the results
-    $results | ogv
+    $results
 }
 
 # NOTE: passing the function body with both using: and function: works
@@ -596,56 +729,79 @@ function test-main {
 # NOTE: Dynamic function call works by passing the function name as a string and expanding with iex
 # BUG: But... because the function has to be re-defined, it likely isn't a net performance gain
 # $Functionname = 'info_timezone_net'
-$jobtest = Start-Job -Name 'info_test' -ArgumentList $(Invoke-Expression "`$function:$Functionname") -ScriptBlock { param($func) Invoke-Expression $func }
+# $jobtest = Start-Job -Name 'info_test' -ArgumentList $([scriptblock]::Create("`$function:$Functionname").Invoke()) -ScriptBlock { param($func) & $func }
 
 function test-mta {
+    [CmdletBinding()]
+    Param(
+        $Funcs = $config
+    )
+
     $results = @()
+    $jobs = @()
 
     # run each command in a separate thread
-    foreach ($item in $config) {
+    foreach ($item in $Funcs) {
         $funcname = "info_$item"
-        $splat = @{
+        <# $splat = @{
             Name          = $funcname
-            ArgumentList  = $(Invoke-Expression "`$function:$funcname")
+            ArgumentList  = $([scriptblock]::Create('${function:'+$funcname+'}').Invoke())
             ScriptBlock   = {
                 param($func)
-                Invoke-Expression $func
+                & $func
             }
             ThrottleLimit = 5
-        }
-        if(Test-Path $funcname) {
-            $ThreadJob = Start-ThreadJob @splat
-        } else {
-            $results += [pscustomobject]@{
-                Command       = "$e[31mfunction '$funcname' not found"
-                Output        = $null
-                ExecutionTime = 0
-            }
+        } #>
+        if(Test-Path ("function:\"+$funcname)) {
+            Write-Host "Starting $funcname..."
+            # $ThreadJob = Start-ThreadJob @splat
+            # $jobs += Start-Job -Name $funcname -ScriptBlock { iex $input } -ArgumentList ${function:$funcname}
+            $jobs += Start-Job -Name $funcname -ScriptBlock {Param($fdef) Invoke-Expression $fdef } -ArgumentList (Get-Command $funcname).Definition
         }
     }
     
     # Wait for all jobs to complete
-    $jobs = Get-Job -Name info_*
-    $jobs | Wait-Job
+    # $jobs = Get-Job -Name info_*
+    $jobs | Wait-Job | Out-Null
+
+    $timetotal = [timespan[]]@()
 
     # Process each job result
     foreach ($job in $jobs) {
-        $infotime = $job.PSEndTime.Value - $job.PSBeginTime.Value
-        $timetotal += $infotime
+        # $info = $job | Wait-Job | Receive-Job
+        $infotime = $job.PSEndTime - $job.PSBeginTime
+        $timetotal += $infotime.TotalMilliseconds
+        $jobname = $job.Name
         $info = Receive-Job -Job $job
-        Remove-Job -Job $job
-
-        # Calculate the average execution time
-        $averageExecutionTime = $timetotal / 10
-    
+        
         # Store the output and average execution time in the results array
         $results += [pscustomobject]@{
-            Command       = $cmd
-            Output        = $info
-            ExecutionTime = [math]::Round($averageExecutionTime, 2)
+            Command       = $jobname
+            Title         = $info.title
+            Output        = $info.content
+            ExecutionTime = $infotime.TotalMilliseconds
         }
+
+        Write-Verbose "Job $jobname completed in $($infotime.TotalMilliseconds) ms"
     }
+
+    # Calculate the average execution time
+    $averageExecutionTime = $timetotal | Measure-Object -AllStats
+    Write-Verbose "Total:   $($averageExecutionTime.Sum)"
+    Write-Verbose "Average: $($averageExecutionTime.Average)"
+    Write-Verbose "Minimum: $($averageExecutionTime.Minimum)"
+    Write-Verbose "Maximum: $($averageExecutionTime.Maximum)"
+
+    $jobs | Remove-Job
     $results
 }
+
+$sw1 = [System.Diagnostics.Stopwatch]::StartNew()
+
+# test-mta -Verbose
+test-main -Repeat 1
+
+$ElapsedTime = $sw1.Elapsed
+Write-Host "Total time: $($ElapsedTime.TotalSeconds)s"
 
 $cimSession | Remove-CimSession

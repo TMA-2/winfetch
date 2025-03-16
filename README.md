@@ -2,10 +2,17 @@
 
 <br />
 <p align="center">
-<img alt="GitHub code size in bytes" src="https://img.shields.io/github/languages/code-size/lptstr/winfetch.svg">
-<img alt="GitHub license" src="https://img.shields.io/github/license/lptstr/winfetch.svg">
-<img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/lptstr/winfetch.svg">
-<img alt="Made with: Wordpad" src="https://img.shields.io/badge/made%20with-wordpad-blue.svg">
+    <img alt="GitHub code size in bytes" src="https://img.shields.io/github/languages/code-size/TMA-2/winfetch.svg">
+    <a href="https://github.com/TMA-2/winfetch/blob/master/winfetch.ps1">
+        <img alt="Script file size in bytes" src="https://img.shields.io/github/size/TMA-2/winfetch/winfetch.ps1">
+    </a>
+    <a href="https://github.com/TMA-2/winfetch/blob/master/LICENSE">
+        <img alt="GitHub license" src="https://img.shields.io/github/license/TMA-2/winfetch.svg">
+    </a>
+    <img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/TMA-2/winfetch.svg">
+    <a href="https://code.visualstudio.com">
+        <img alt="Made with VS Code" src="https://img.shields.io/badge/made%20with-VSCode-blue.svg">
+    </a>
 </p>
 
 <br />

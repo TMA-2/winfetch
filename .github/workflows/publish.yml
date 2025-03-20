@@ -1,12 +1,46 @@
+# ref: https://github.com/ironmansoftware/code-conversion/blob/main/.github/workflows/publish.yml
 name: Publish to PSGallery
 
 on:
   release:
-    types: [published]
+    types: [published, workflow_dispatch]
 
 jobs:
+  build:
+    timeout-minutes: 20
+
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - uses: nuget/setup-nuget@v1
+
+    - name: Install .NET Core
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: 6.0.x
+
+    - name: Add msbuild to PATH
+      uses: microsoft/setup-msbuild@v1.1
+
+    - name: Build
+      shell: pwsh
+      run: |
+        .\build.ps1
+
+    - name: Publish
+      shell: pwsh
+      run: |
+        Publish-Script -Path .\winfetch.ps1 -NuGetApiKey $ENV:PSGALLERY
+      env:
+        PSGALLERY: ${{ secrets.PSGALLERY_KEY }}
+
   publish:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
       - shell: pwsh

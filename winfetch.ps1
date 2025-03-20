@@ -79,32 +79,37 @@
 #>
 [CmdletBinding()]
 param(
-    [string][alias('i')]$image,
-    [switch][alias('k')]$ascii,
-    [switch][alias('g')]$genconf,
-    [string][alias('c')]$configpath,
-    [switch][alias('n')]$noimage,
-    [string][alias('l')]$logo,
-    [switch][alias('b')]$blink,
-    [switch][alias('s')]$stripansi,
-    # NOTE: This parameter will depend on the terminal being used, and having an img2sixel build.
+    [Alias('i')][string]$image,
+    [Alias('k')][switch]$ascii,
+    [Alias('g')][switch]$genconf,
+    [Alias('c')][string]$configpath,
+    [Alias('n')][switch]$noimage,
+    [Alias('l')][string]$logo,
+    [Alias('b')][switch]$blink,
+    [Alias('s')][switch]$stripansi,
+    # TODO: implement cached information if it's older than a configurable parameter
+    [Alias('d')][switch]$cached,
+    [Alias('u')][timespan]$cacheage = [timespan]::FromMinutes(5),
+    # TODO: This parameter will depend on the terminal being used, and having an img2sixel build.
     # https://www.arewesixelyet.com has a list of terminals that support sixel.
-    # Windows Terminal supports sixel as of Preview 1.22.
-    [Parameter(DontShow)][switch][alias('x')]$sixel,
-    [switch][alias('e')]$timed,
-    [switch][alias('m')]$multithreaded,
-    # dynamically fit info_dashes to the previous line
-    [switch][alias('d')]$fitdashes,
+    [Parameter(DontShow)]
+    [Alias('x')][switch]$sixel,
+    [Alias('e')][switch]$timed,
+    # TODO: Finish implementing and test
+    [Alias('m')][switch]$multithreaded,
+    # TODO: dynamically fit info_dashes to the previous line
+    [Alias('f')][switch]$fitdashes,
     # loads functions but does not output anything
-    [switch][alias('n')]$nooutput,
-    [switch][alias('a')]$all,
-    [switch][alias('h')]$help,
+    [Alias('n')][switch]$nooutput,
+    [Alias('a')][switch]$all,
+    [Alias('h')][switch]$help,
     [ValidateSet("text", "bar", "textbar", "bartext")][string]$cpustyle = "text",
     [ValidateSet("text", "bar", "textbar", "bartext")][string]$memorystyle = "text",
     [ValidateSet("text", "bar", "textbar", "bartext")][string]$diskstyle = "text",
     [ValidateSet("text", "bar", "textbar", "bartext")][string]$batterystyle = "text",
-    [ValidateScript({ $_ -gt 1 -and $_ -lt $Host.UI.RawUI.WindowSize.Width - 1 })][alias('w')][int]$imgwidth = 35,
-    [byte][alias('t')]$alphathreshold = 50,
+    [ValidateScript({ $_ -gt 1 -and $_ -lt $Host.UI.RawUI.WindowSize.Width - 1 })]
+    [alias('w')][int]$imgwidth = 35,
+    [alias('t')][byte]$alphathreshold = 50,
     [array]$showdisks = @($env:SystemDrive),
     [array]$showpkgs = @("scoop", "choco")
 )
@@ -319,8 +324,10 @@ foreach ($param in $PSBoundParameters.Keys) {
 $e = [char]0x1B
 $t = if ($blink) { "5" } else { "1" }
 $script:ansiRegex = '([\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-ntqry=><~])))'
+# NOTE: Overhead: ~30ms
 $cimSession = New-CimSession
-$os = Get-CimInstance -ClassName Win32_OperatingSystem -Property Caption, OSArchitecture, LastBootUpTime, TotalVisibleMemorySize, FreePhysicalMemory -CimSession $cimSession
+# NOTE: Overhead: ~100ms
+$os = Get-CimInstance -ClassName Win32_OperatingSystem -CimSession $cimSession | select Caption, OSArchitecture, LastBootUpTime, TotalVisibleMemorySize, FreePhysicalMemory, Version
 $script:COLUMNS = $imgwidth
 
 # ===== UPDATE PROCESS TYPE FOR 5.1 =====
@@ -892,7 +899,7 @@ function info_disk {
                 if ($_.TotalSize -gt 0) {
                     $used = $_.TotalSize - $_.AvailableFreeSpace
                     $usage = [math]::Floor(($used / $_.TotalSize * 100))
-    
+
                     [void]$lines.Add(@{
                             title   = "Disk ($diskLetter)"
                             content = get_level_info "" $diskstyle $usage "$(to_units $used) / $(to_units $_.TotalSize)"
@@ -1542,24 +1549,24 @@ if(!$nooutput) {
     if (-not $stripansi) {
         # unhide the cursor after a terminating error
         trap { "$e[?25h"; break }
-    
+
         # reset terminal sequences and display a newline
         Write-Output "$e[0m$e[?25l"
     } else {
         Write-Output ""
     }
-    
+
     # write logo
     if (-not $stripansi) {
         foreach ($line in $img) {
             Write-Output " $line"
         }
     }
-    
+
     $script:GAP = 3
     $script:writtenLines = 0
     $script:freeSpace = $Host.UI.RawUI.WindowSize.Width - 1
-    
+
     # move cursor to top of image and to its right
     # see: https://espterm.github.io/docs/VT100%20escape%20codes.html
     # TODO: ^[D to move/scroll window up one line * ($img.Length - [Console]::WindowHeight)
@@ -1581,7 +1588,7 @@ if(!$nooutput) {
         $freeSpace -= 1 + $COLUMNS + $GAP
         Write-Output "$e[$($img.Length + 1)A" # Move cursor up N lines
     }
-    
+
     # BUG: script functions are not recognized in Job scriptblocks unless the definition is passed in ArgumentList or InitializationScript
     if ($multithreaded) {
         # create thread jobs for each function
@@ -1620,23 +1627,23 @@ if(!$nooutput) {
                     ScriptBlock   = { Return @{title = "$([char]0x1B)[31mfunction '$using:FuncName' not found"} }
                 }
             }
-            
+
             $jobs = Start-Job @splat
         }
-        
+
         # Wait for all jobs to complete
         $jobs | Wait-Job | Out-Null
-    
+
         # Process each job result
         foreach ($job in $jobs) {
             $infotime = $job.PSEndTime - $job.PSBeginTime
             $timetotal += $infotime
             $info = $job | Receive-Job
-        
+
             if (-not $info) {
                 continue
             }
-        
+
             write_output -lines $info -time $infotime
         }
     } else {
@@ -1662,7 +1669,7 @@ if(!$nooutput) {
             } else {
                 $info = @{ title = "$e[31mfunction 'info_$item' not found" }
             }
-            
+
             if (-not $info) {
                 continue
             } else {
@@ -1672,16 +1679,16 @@ if(!$nooutput) {
                     $lastwidth += ($info.Content -replace $script:ansiRegex).Length + 2
                 }
             }
-        
+
             # this doesn't need to be cast as an array for foreach to work on a single object
             <# if ($info -isnot [array]) {
                 $info = @($info)
             } #>
-        
+
             write_output -lines $info -time $infotime
         }
     }
-    
+
     if ($stripansi) {
         # write out remaining image lines
         for ($i = $writtenLines; $i -lt $img.Length; $i++) {
@@ -1689,7 +1696,7 @@ if(!$nooutput) {
             Write-Output " $imgline"
         }
     }
-    
+
     # move cursor back to the bottom and print 2 newlines
     if (-not $stripansi) {
         $diff = $img.Length - $writtenLines

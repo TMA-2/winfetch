@@ -5,65 +5,78 @@
 #   $info['title'] += " ($($cmdtime.TotalMilliseconds)ms):"
 # TODO: Implement `e[14t to retrieve the terminal size ([4;<Height>;<Width>t])
 #   Unfortunately the output seems to go directly to the input buffer?
-# TODO: Research sixel
+# TODO: Research sixel and how to display an image alongside ascii
 #   ref: https://github.com/teramako/SixPix.NET/blob/main/src/Sixel.Decode.cs
+# TODO: Add cached info option
+    # TODO: include a [timespan] parameter to specify the max cache age
+    # See how cached results are handled @ https://github.com/MartinGC94/UsefulArgumentCompleters/blob/main/Classes/CompletionHelper.psm1
+    # NOTE: To persist across sessions, optionally write to a clixml or json in appdata holding key:value pairs and last run date
 
 # get CIM session for use with winfetch functions
-$cimSession = New-CimSession
+$TimeCIMSession = Measure-Command -Expression {$cimSession = New-CimSession}
+$TimeCIMOS = Measure-Command -Expression {$os = gcim Win32_OperatingSystem -CimSession $cimSession}
+# $OS is used by:
+# building $img ($os -like '*windows x*')
+# info_os (caption, osarchitecture)
+# info_uptime (lastbootuptime)
+# info_memory (totalvisiblememorysize, freephysicalmemory)
+
+# info_kernel uses [System.Environment]::OSVersion.Version
 
 # Win Images from neofetch
 # "set_colors 6 7" is called first, which sets vars c1 - c4. the color is likely added to 30 and 40, making Cyan and White
-${e} = 0x1B
-$cCn = "${e}[36m"
-$cRd = "${e}[31m"
-$cGn = "${e}[32m"
-$cYw = "${e}[33m"
-$cBl = "${e}[34m"
+$e = 0x1B # esc
+$t = 0x01 # blink
+$cCn = "${e}[${t};36m"
+$cRd = "${e}[${t};31m"
+$cGn = "${e}[${t};32m"
+$cYw = "${e}[${t};33m"
+$cBl = "${e}[${t};34m"
 
 $ASCIILogos = @(
     # ${c1}
     Win11 = @"
 ${cCn}################  ################
-################  ################
-################  ################
-################  ################
-################  ################
-################  ################
-################  ################
+${cCn}################  ################
+${cCn}################  ################
+${cCn}################  ################
+${cCn}################  ################
+${cCn}################  ################
+${cCn}################  ################
 
-################  ################
-################  ################
-################  ################
-################  ################
-################  ################
-################  ################
-################  ################
+${cCn}################  ################
+${cCn}################  ################
+${cCn}################  ################
+${cCn}################  ################
+${cCn}################  ################
+${cCn}################  ################
+${cCn}################  ################
 "@
     Win10 = @"
 ${cCn}                                ..,
-                    ....,,:;+ccllll
-      ...,,+:;  cllllllllllllllllll
-,cclllllllllll  lllllllllllllllllll
-llllllllllllll  lllllllllllllllllll
-llllllllllllll  lllllllllllllllllll
-llllllllllllll  lllllllllllllllllll
-llllllllllllll  lllllllllllllllllll
-llllllllllllll  lllllllllllllllllll
+${cCn}                    ....,,:;+ccllll
+${cCn}      ...,,+:;  cllllllllllllllllll
+${cCn},cclllllllllll  lllllllllllllllllll
+${cCn}llllllllllllll  lllllllllllllllllll
+${cCn}llllllllllllll  lllllllllllllllllll
+${cCn}llllllllllllll  lllllllllllllllllll
+${cCn}llllllllllllll  lllllllllllllllllll
+${cCn}llllllllllllll  lllllllllllllllllll
 
-llllllllllllll  lllllllllllllllllll
-llllllllllllll  lllllllllllllllllll
-llllllllllllll  lllllllllllllllllll
-llllllllllllll  lllllllllllllllllll
-llllllllllllll  lllllllllllllllllll
-``'ccllllllllll  lllllllllllllllllll
-       ``' \\*::  :ccllllllllllllllll
-                       ````````''*::cll
-                                 ````
+${cCn}llllllllllllll  lllllllllllllllllll
+${cCn}llllllllllllll  lllllllllllllllllll
+${cCn}llllllllllllll  lllllllllllllllllll
+${cCn}llllllllllllll  lllllllllllllllllll
+${cCn}llllllllllllll  lllllllllllllllllll
+${cCn}``'ccllllllllll  lllllllllllllllllll
+${cCn}       ``' \\*::  :ccllllllllllllllll
+${cCn}                       ````````''*::cll
+${cCn}                                 ````
 "@
     # set_colors 1 2 4 3 = red, green, yellow, blue
     Win7 = @"
 ${cRd}        ,.=:!!t3Z3z.,
-       :tt:::tt333EE3
+${cRd}       :tt:::tt333EE3
 ${cRd}       Et:::ztt33EEEL${cGn} @Ee.,      ..,
 ${cRd}      ;tt:::tt333EE7${cGn} ;EEEEEEttttt33#
 ${cRd}     :Et:::zt333EEQ.${cGn} `$EEEEEttttt33QL
@@ -77,7 +90,7 @@ ${cYw} ;:::::::::t33V${cBl} ;EEEttttt::::t3
 ${cYw} E::::::::zt33L${cBl} @EEEtttt::::z3F
 ${cYw}{3=*^``````"*4E3)${cBl} ;EEEtttt:::::tZ``
 ${cYw}             ``${cBl} :EEEEtttt::::z7
-                 "VEzjt:;;z>*``
+${cYw}                 "VEzjt:;;z>*``
 "@
 )
 
@@ -511,11 +524,11 @@ function info_locale_reg {
 function info_locale_net {
     # Get the current region (location) from .NET which saves a few MS over the registry
     $RegionInfo = [System.Globalization.RegionInfo]::CurrentRegion.DisplayName
-    
+
     # NOTE: The current CultureInfo (language) can be found in the static CurrentCulture property, but it only reflects the
     #   active one as opposed to all installed languages
     # $Culture = [System.Globalization.CultureInfo]::CurrentCulture
-    
+
     # Get the current user's available languages using the registry
     # Iterate through registry key in case multiple languages are configured
     (Get-ItemProperty -Path 'HKCU:\Control Panel\International\User Profile').Languages | ForEach-Object {
@@ -598,13 +611,23 @@ function info_cpu_usage {
     }
 }
 # ===== MEMORY =====
-function info_memory {
+function info_memory_wmi {
     $total = $os.TotalVisibleMemorySize / 1mb
     $used = ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1mb
     $usage = [math]::floor(($used / $total * 100))
     return @{
         title   = "Memory"
-        content = get_level_info "   " $memorystyle $usage "$($used.ToString("#.##")) GiB / $($total.ToString("#.##")) GiB"
+        content = "$usage% $($used.ToString("#.##")) GiB / $($total.ToString("#.##")) GiB"
+    }
+}
+# NOTE: using performance counters has far too much overhead compared to WMI
+function info_memory_net {
+    $total = [System.Diagnostics.PerformanceCounter]::new('Memory', 'Available MBytes').NextValue()
+    $used = [System.Diagnostics.PerformanceCounter]::new('Memory', 'Committed MBytes').NextValue()
+    $usage = [math]::floor(($used / $total * 100))
+    return @{
+        title   = "Memory"
+        content = "$usage% $($used.ToString("#.##")) GiB / $($total.ToString("#.##")) GiB"
     }
 }
 # <<===================<< CPU Usage by current process
@@ -631,29 +654,53 @@ function info_memory_usage_proc {
 }
 #endregion: Resource Usage
 #endregion: CPU/RAM
-
-function public_ip {
-    Param(
-        [ValidateSet('identme', 'icanhazip', 'ifconfigme', 'ifconfigco', 'ipecho', 'myexternalip')]
-        [string]$Source = 'identme'
-    )
-    switch ($Source) {
-        'identme' { $src = 'http://ident.me' }
-        'icanhazip' { $src = 'http://icanhazip.com' }
-        'ifconfigme' { $src = 'http://ifconfig.me/ip' }
-        'ipecho' { $src = 'http://ipecho.net/plain' }
-        'whatismyipaddress' { $src = 'http://bot.whatismyipaddress.com' <#404#>}
-        'myexternalip' { $src = 'http://myexternalip.com/raw' }
-        'ifconfigco' { $src = 'http://ifconfig.co/ip' <#1 request/min#>}
-        'ipify' { $src = 'http://api.ipify.org' <#Requires API key#>}
-    }
-    $ip = Invoke-RestMethod -Uri $src
+#region: Win32_OperatingSystem Usage
+# to measure, use $TimeCIMSession + $TimeCIMOS
+function info_os_wmi {
     return @{
-        title   = 'Public IP'
-        content = $ip
+        title   = 'OS'
+        content = "$($os.Caption.TrimStart('Microsoft ')) [$($os.OSArchitecture)]"
     }
 }
+function info_os_net {
+    $OSCaption = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription.TrimStart('Microsoft ')
+    $OSArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+    return @{
+        title   = 'OS'
+        content = "$OSCaption [$OSArchitecture]"
+    }
+}
+function info_uptime_wmi {
+    @{
+        title   = "Uptime"
+        content = $(switch ([System.DateTime]::Now - $os.LastBootUpTime) {
+            ({ $PSItem.Days -eq 1 }) { '1 day' }
+            ({ $PSItem.Days -gt 1 }) { "$($PSItem.Days) days" }
+            ({ $PSItem.Hours -eq 1 }) { '1 hour' }
+            ({ $PSItem.Hours -gt 1 }) { "$($PSItem.Hours) hours" }
+            ({ $PSItem.Minutes -eq 1 }) { '1 minute' }
+            ({ $PSItem.Minutes -gt 1 }) { "$($PSItem.Minutes) minutes" }
+            }) -join ' '
+    }
+}
+function info_uptime_net {
+    $UptimeMS = [System.Environment]::TickCount64
+    $LastBootTime = [datetime]::Now - [datetime]::Now.AddMilliseconds(-$UptimeMS)
+    $LastBootTimeStr = switch($LastBootTime) {
+        { $PSItem.Days -eq 1 } { '1 day' }
+        { $PSItem.Days -gt 1 } { $PSItem.Days + ' days' }
+        { $PSItem.Hours -eq 1 } { '1 hour' }
+        { $PSItem.Hours -gt 1 } { $PSItem.Hours + ' hours' }
+        { $PSItem.Minutes -eq 1 } { '1 minute' }
+        { $PSItem.Minutes -gt 1 } { $PSItem.Minutes + ' minutes' }
+    } -join ' '
 
+    Return @{
+        title   = "Uptime"
+        content = $LastBootTimeStr
+    }
+}
+#endregion: Win32_OperatingSystem
 #region: colorbar
 function info_colorbar {
     return @(
@@ -693,19 +740,48 @@ function info_colorbar_gen {
     return $Return
 }
 #endregion: colorbar
+#region: Misc
+function public_ip {
+    Param(
+        [ValidateSet('identme','icanhazip','ifconfigme','ipecho','myexternalip','ifconfigco')]
+        [string]$Source = 'identme'
+    )
+    $src = switch ($Source) {
+        'identme' { 'http://ident.me' }
+        'icanhazip' {'http://icanhazip.com' }
+        'ifconfigme' {'http://ifconfig.me/ip' }
+        'ipecho' {'http://ipecho.net/plain' }
+        'myexternalip' {'http://myexternalip.com/raw' }
+        'ifconfigco' {'http://ifconfig.co/ip' <#1 request/min#>}
+        'whatismyipaddress' {'http://bot.whatismyipaddress.com' <#404#>}
+        'ipify' {'http://api.ipify.org' <#Requires API key#>}
+    }
+    $ip = Invoke-RestMethod -Uri $src
+    return @{
+        title   = 'Public IP'
+        content = $ip
+    }
+}
+#endregion: Misc
 
-# PSPT Profile: 391ms vs 478ms, 17 vs 91
-# Measure: 11 vs 55, 1 vs. 202
-# info_resolution_net # 391, 17, 11, 1
-# info_resolution_wmi # 478, 91, 55, 202
-# PSPT Profile: 118ms vs 20859 (?), 86 vs 789
-# Measure: 21 vs. 17, 1 vs. 3
-# info_locale_net # 118, 86, 21, 1
-# info_locale_reg # 20859, 789, 17, 3
-# PSPT Profile: 97ms vs 105ms, 15 vs 58
-# Measure: 21 vs. 117, 2 vs. 19
-# info_timezone_net # 97, 15, 21, 2
-# info_timezone_wmi # 105, 58, 117, 19
+<# SECTION: Measurements
+# PSPT = PowerShell Pro Tools Profiling
+# MCMD = Measure-Command
+# | Function | Method | Time 1 | Time 2
+# | -- | -- | --: | --: |
+# info_resolution_net | PSPT | 391 | 17
+# info_resolution_net | MCMD | 11 | 1
+# info_resolution_wmi | PSPT | 478 | 91
+# info_resolution_wmi | MCMD | 55 | 202
+# info_locale_net | PSPT | 118 | 86
+# info_locale_net | MCMD | 21 | 1
+# info_locale_reg | PSPT | 20859? | 789
+# info_locale_reg | MCMD | 17 | 3
+# info_timezone_net | PSPT | 97 | 15
+# info_timezone_net | MCMD | 21, 2
+# info_timezone_wmi | PSPT | 105 | 58
+# info_timezone_wmi | MCMD | 117 | 19
+#>
 
 $config = @(
     'resolution_net' #  1.81 avg
@@ -728,13 +804,13 @@ $config = @(
 function winfetch_test([string[]]$Funcs = $config, [int]$Repeat = 10) {
     # Initialize an array to store the results
     $results = @()
-    
+
     # Iterate through each command in $Cmds
     foreach ($item in $Funcs) {
         # Initialize variables to store total execution time and output
         $totalExecutionTime = [int[]]@()
         $output = $null
-    
+
         # Run each command 10 times
         for ($i = 0; $i -lt $Repeat; $i++) {
             $executionTime = Measure-Command {
@@ -742,10 +818,10 @@ function winfetch_test([string[]]$Funcs = $config, [int]$Repeat = 10) {
             }
             $totalExecutionTime += $executionTime.TotalSeconds
         }
-    
+
         # Calculate the average execution time
         $ExecutionTimes = $totalExecutionTime | Measure-Object
-    
+
         # Store the output and average execution time in the results array
         $results += [pscustomobject]@{
             Command     = $item
@@ -756,7 +832,7 @@ function winfetch_test([string[]]$Funcs = $config, [int]$Repeat = 10) {
             MaximumTime = [math]::Round($ExecutionTimes.Maximum, 3)
         }
     }
-    
+
     # Output the results
     $results | ogv
 }
@@ -802,7 +878,7 @@ function winfetch_test_mta {
             }
         }
     }
-    
+
     # Wait for all jobs to complete
     # $jobs = Get-Job -Name info_*
     $jobs | Wait-Job | Out-Null
@@ -815,7 +891,7 @@ function winfetch_test_mta {
 
         # Calculate the average execution time
         $ExecutionTime = $infotime | Measure-Object -AllStats
-    
+
         # Store the output and average execution time in the results array
         $results += [pscustomobject]@{
             Command       = $job.Name

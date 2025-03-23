@@ -89,7 +89,7 @@ param(
     [switch][alias('s')]$stripansi,
     # NOTE: This parameter will depend on the terminal being used, and having an img2sixel build.
     # https://www.arewesixelyet.com has a list of terminals that support sixel.
-    # Windows Terminal supports sixel as of Preview 1.22.
+    # Windows Terminal supports sixel as of v1.22.
     [Parameter(DontShow)][switch][alias('x')]$sixel,
     [switch][alias('e')]$timed,
     [switch][alias('m')]$multithreaded,
@@ -222,8 +222,8 @@ $defaultConfig = @'
     "motherboard"
     # "custom_time"  # use custom info line
     "uptime"
-    # "ps_pkgs"  # takes some time
-    "pkgs"
+    # "ps_pkgs"  # can be slow
+    # "pkgs" # can be slow
     "pwsh"
     "resolution"
     "terminal"
@@ -318,6 +318,31 @@ foreach ($param in $PSBoundParameters.Keys) {
 #region: Variables
 $e = [char]0x1B
 $t = if ($blink) { "5" } else { "1" }
+# pre-define bg colors for logos
+$CBBk = "${e}[${t};30m"
+$CBRd = "${e}[${t};31m"
+$CBGn = "${e}[${t};32m"
+$CBYl = "${e}[${t};33m"
+$CBBl = "${e}[${t};34m"
+$CBMg = "${e}[${t};35m"
+$CBCy = "${e}[${t};36m"
+$CBWt = "${e}[${t};37m"
+$CFBk = "${e}[${t}30m"
+$CFRd = "${e}[${t}31m"
+$CFGn = "${e}[${t}32m"
+$CFYl = "${e}[${t}33m"
+$CFBl = "${e}[${t}34m"
+$CFMg = "${e}[${t}35m"
+$CFCy = "${e}[${t}36m"
+$CFWt = "${e}[${t}37m"
+$CBk = "${e}[30m"
+$CRd = "${e}[31m"
+$CGn = "${e}[32m"
+$CYl = "${e}[33m"
+$CBl = "${e}[34m"
+$CMg = "${e}[35m"
+$CCy = "${e}[36m"
+$CWt = "${e}[37m"
 $script:ansiRegex = '([\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-ntqry=><~])))'
 $cimSession = New-CimSession
 $os = Get-CimInstance -ClassName Win32_OperatingSystem -Property Caption, OSArchitecture, LastBootUpTime, TotalVisibleMemorySize, FreePhysicalMemory -CimSession $cimSession
@@ -406,6 +431,71 @@ function truncate_line {
     }
 
     return $trucatedOutput
+}
+
+function convert_image($path = $image) {
+    if ($path -eq 'wallpaper') {
+        $path = (Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name Wallpaper).Wallpaper
+    }
+
+    Add-Type -AssemblyName 'System.Drawing'
+    $OldImage = if (Test-Path $path -PathType Leaf) {
+        [Drawing.Bitmap]::FromFile((Resolve-Path $path))
+    } else {
+        [Drawing.Bitmap]::FromStream((Invoke-WebRequest $path -UseBasicParsing).RawContentStream)
+    }
+
+    # Divide scaled height by 2.2 to compensate for ASCII characters being taller than they are wide
+    [int]$ROWS = $OldImage.Height / $OldImage.Width * $script:COLUMNS / $(if ($ascii) { 2.2 } else { 1 })
+    $Bitmap = New-Object System.Drawing.Bitmap @($OldImage, [Drawing.Size]"$script:COLUMNS,$ROWS")
+
+    if ($ascii) {
+        $chars = ' .,:;+iIH$@'
+        for ($i = 0; $i -lt $Bitmap.Height; $i++) {
+            $currline = ""
+            for ($j = 0; $j -lt $Bitmap.Width; $j++) {
+                $p = $Bitmap.GetPixel($j, $i)
+                $currline += "$e[38;2;$($p.R);$($p.G);$($p.B)m$($chars[[math]::Floor($p.GetBrightness() * $chars.Length)])$e[0m"
+            }
+            $currline
+        }
+    } else {
+        for ($i = 0; $i -lt $Bitmap.Height; $i += 2) {
+            $currline = ""
+            for ($j = 0; $j -lt $Bitmap.Width; $j++) {
+                $pixel1 = $Bitmap.GetPixel($j, $i)
+                $char = [char]0x2580
+                if ($i -ge $Bitmap.Height - 1) {
+                    if ($pixel1.A -lt $alphathreshold) {
+                        $char = [char]0x2800
+                        $ansi = "$e[49m"
+                    } else {
+                        $ansi = "$e[38;2;$($pixel1.R);$($pixel1.G);$($pixel1.B)m"
+                    }
+                } else {
+                    $pixel2 = $Bitmap.GetPixel($j, $i + 1)
+                    if ($pixel1.A -lt $alphathreshold -or $pixel2.A -lt $alphathreshold) {
+                        if ($pixel1.A -lt $alphathreshold -and $pixel2.A -lt $alphathreshold) {
+                            $char = [char]0x2800
+                            $ansi = "$e[49m"
+                        } elseif ($pixel1.A -lt $alphathreshold) {
+                            $char = [char]0x2584
+                            $ansi = "$e[49;38;2;$($pixel2.R);$($pixel2.G);$($pixel2.B)m"
+                        } else {
+                            $ansi = "$e[49;38;2;$($pixel1.R);$($pixel1.G);$($pixel1.B)m"
+                        }
+                    } else {
+                        $ansi = "$e[38;2;$($pixel1.R);$($pixel1.G);$($pixel1.B);48;2;$($pixel2.R);$($pixel2.G);$($pixel2.B)m"
+                    }
+                }
+                $currline += "$ansi$char$e[0m"
+            }
+            $currline
+        }
+    }
+
+    $Bitmap.Dispose()
+    $OldImage.Dispose()
 }
 
 function write_output($lines, $time) {
@@ -533,98 +623,98 @@ $img = if (-not $noimage -and -not $nooutput) {
         if ($logo -eq "Windows 11") {
             $COLUMNS = 32
             @(
-                "${e}[${t};34mlllllllllllllll   lllllllllllllll"
-                "${e}[${t};34mlllllllllllllll   lllllllllllllll"
-                "${e}[${t};34mlllllllllllllll   lllllllllllllll"
-                "${e}[${t};34mlllllllllllllll   lllllllllllllll"
-                "${e}[${t};34mlllllllllllllll   lllllllllllllll"
-                "${e}[${t};34mlllllllllllllll   lllllllllllllll"
-                "${e}[${t};34mlllllllllllllll   lllllllllllllll"
-                "${e}[${t};34m                                 "
-                "${e}[${t};34mlllllllllllllll   lllllllllllllll"
-                "${e}[${t};34mlllllllllllllll   lllllllllllllll"
-                "${e}[${t};34mlllllllllllllll   lllllllllllllll"
-                "${e}[${t};34mlllllllllllllll   lllllllllllllll"
-                "${e}[${t};34mlllllllllllllll   lllllllllllllll"
-                "${e}[${t};34mlllllllllllllll   lllllllllllllll"
-                "${e}[${t};34mlllllllllllllll   lllllllllllllll"
+                "${CBBl}lllllllllllllll   lllllllllllllll"
+                "${CBBl}lllllllllllllll   lllllllllllllll"
+                "${CBBl}lllllllllllllll   lllllllllllllll"
+                "${CBBl}lllllllllllllll   lllllllllllllll"
+                "${CBBl}lllllllllllllll   lllllllllllllll"
+                "${CBBl}lllllllllllllll   lllllllllllllll"
+                "${CBBl}lllllllllllllll   lllllllllllllll"
+                "${CBBl}                                 "
+                "${CBBl}lllllllllllllll   lllllllllllllll"
+                "${CBBl}lllllllllllllll   lllllllllllllll"
+                "${CBBl}lllllllllllllll   lllllllllllllll"
+                "${CBBl}lllllllllllllll   lllllllllllllll"
+                "${CBBl}lllllllllllllll   lllllllllllllll"
+                "${CBBl}lllllllllllllll   lllllllllllllll"
+                "${CBBl}lllllllllllllll   lllllllllllllll"
             )
         } elseif ($logo -eq "Windows 10" -Or $logo -eq "Windows 8.1" -Or $logo -eq "Windows 8") {
             $COLUMNS = 34
             @(
-                "${e}[${t};34m                    ....,,:;+ccllll"
-                "${e}[${t};34m      ...,,+:;  cllllllllllllllllll"
-                "${e}[${t};34m,cclllllllllll  lllllllllllllllllll"
-                "${e}[${t};34mllllllllllllll  lllllllllllllllllll"
-                "${e}[${t};34mllllllllllllll  lllllllllllllllllll"
-                "${e}[${t};34mllllllllllllll  lllllllllllllllllll"
-                "${e}[${t};34mllllllllllllll  lllllllllllllllllll"
-                "${e}[${t};34mllllllllllllll  lllllllllllllllllll"
-                "${e}[${t};34m                                   "
-                "${e}[${t};34mllllllllllllll  lllllllllllllllllll"
-                "${e}[${t};34mllllllllllllll  lllllllllllllllllll"
-                "${e}[${t};34mllllllllllllll  lllllllllllllllllll"
-                "${e}[${t};34mllllllllllllll  lllllllllllllllllll"
-                "${e}[${t};34mllllllllllllll  lllllllllllllllllll"
-                "${e}[${t};34m``'ccllllllllll  lllllllllllllllllll"
-                "${e}[${t};34m      ``' \\*::  :ccllllllllllllllll"
-                "${e}[${t};34m                       ````````''*::cll"
-                "${e}[${t};34m                                 ````"
+                "${CBBl}                    ....,,:;+ccllll"
+                "${CBBl}      ...,,+:;  cllllllllllllllllll"
+                "${CBBl},cclllllllllll  lllllllllllllllllll"
+                "${CBBl}llllllllllllll  lllllllllllllllllll"
+                "${CBBl}llllllllllllll  lllllllllllllllllll"
+                "${CBBl}llllllllllllll  lllllllllllllllllll"
+                "${CBBl}llllllllllllll  lllllllllllllllllll"
+                "${CBBl}llllllllllllll  lllllllllllllllllll"
+                "${CBBl}                                   "
+                "${CBBl}llllllllllllll  lllllllllllllllllll"
+                "${CBBl}llllllllllllll  lllllllllllllllllll"
+                "${CBBl}llllllllllllll  lllllllllllllllllll"
+                "${CBBl}llllllllllllll  lllllllllllllllllll"
+                "${CBBl}llllllllllllll  lllllllllllllllllll"
+                "${CBBl}``'ccllllllllll  lllllllllllllllllll"
+                "${CBBl}      ``' \\*::  :ccllllllllllllllll"
+                "${CBBl}                       ````````''*::cll"
+                "${CBBl}                                 ````"
             )
         } elseif ($logo -eq "Windows 7" -Or $logo -eq "Windows Vista" -Or $logo -eq "Windows XP") {
             $COLUMNS = 35
             @(
-                "${e}[${t};31m        ,.=:!!t3Z3z.,               "
-                "${e}[${t};31m       :tt:::tt333EE3               "
-                "${e}[${t};31m       Et:::ztt33EEE  ${e}[32m@Ee.,      ..,"
-                "${e}[${t};31m      ;tt:::tt333EE7 ${e}[32m;EEEEEEttttt33#"
-                "${e}[${t};31m     :Et:::zt333EEQ. ${e}[32mSEEEEEttttt33QL"
-                "${e}[${t};31m     it::::tt333EEF ${e}[32m@EEEEEEttttt33F "
-                "${e}[${t};31m    ;3=*^``````'*4EEV ${e}[32m:EEEEEEttttt33@. "
-                "${e}[${t};34m    ,.=::::it=., ${e}[31m`` ${e}[32m@EEEEEEtttz33QF  "
-                "${e}[${t};34m   ;::::::::zt33)   ${e}[32m'4EEEtttji3P*   "
-                "${e}[${t};34m  :t::::::::tt33 ${e}[33m:Z3z..  ${e}[32m```` ${e}[33m,..g.   "
-                "${e}[${t};34m  i::::::::zt33F ${e}[33mAEEEtttt::::ztF    "
-                "${e}[${t};34m ;:::::::::t33V ${e}[33m;EEEttttt::::t3     "
-                "${e}[${t};34m E::::::::zt33L ${e}[33m@EEEtttt::::z3F     "
-                "${e}[${t};34m{3=*^``````'*4E3) ${e}[33m;EEEtttt:::::tZ``     "
-                "${e}[${t};34m            `` ${e}[33m:EEEEtttt::::z7       "
-                "${e}[${t};33m                'VEzjt:;;z>*``       "
+                "${CBRd}        ,.=:!!t3Z3z.,               "
+                "${CBRd}       :tt:::tt333EE3               "
+                "${CBRd}       Et:::ztt33EEE  ${CGn}@Ee.,      ..,"
+                "${CBRd}      ;tt:::tt333EE7 ${CGn};EEEEEEttttt33#"
+                "${CBRd}     :Et:::zt333EEQ. ${CGn}SEEEEEttttt33QL"
+                "${CBRd}     it::::tt333EEF ${CGn}@EEEEEEttttt33F "
+                "${CBRd}    ;3=*^``````'*4EEV ${CGn}:EEEEEEttttt33@. "
+                "${CBBl}    ,.=::::it=., ${CRd}`` ${CGn}@EEEEEEtttz33QF  "
+                "${CBBl}   ;::::::::zt33)   ${CGn}'4EEEtttji3P*   "
+                "${CBBl}  :t::::::::tt33 ${CYl}:Z3z..  ${CGn}```` ${CYl},..g.   "
+                "${CBBl}  i::::::::zt33F ${CYl}AEEEtttt::::ztF    "
+                "${CBBl} ;:::::::::t33V ${CYl};EEEttttt::::t3     "
+                "${CBBl} E::::::::zt33L ${CYl}@EEEtttt::::z3F     "
+                "${CBBl}{3=*^``````'*4E3) ${CYl};EEEtttt:::::tZ``     "
+                "${CBBl}            `` ${CYl}:EEEEtttt::::z7       "
+                "${CBYl}                'VEzjt:;;z>*``       "
             )
         } elseif ($logo -eq "Microsoft") {
             $COLUMNS = 13
             @(
-                "${e}[${t};31m┌─────┐${e}[32m┌─────┐"
-                "${e}[${t};31m│     │${e}[32m│     │"
-                "${e}[${t};31m│     │${e}[32m│     │"
-                "${e}[${t};31m└─────┘${e}[32m└─────┘"
-                "${e}[${t};34m┌─────┐${e}[33m┌─────┐"
-                "${e}[${t};34m│     │${e}[33m│     │"
-                "${e}[${t};34m│     │${e}[33m│     │"
-                "${e}[${t};34m└─────┘${e}[33m└─────┘"
+                "${CBRd}┌─────┐${CGn}┌─────┐"
+                "${CBRd}│     │${CGn}│     │"
+                "${CBRd}│     │${CGn}│     │"
+                "${CBRd}└─────┘${CGn}└─────┘"
+                "${CBBl}┌─────┐${CYl}┌─────┐"
+                "${CBBl}│     │${CYl}│     │"
+                "${CBBl}│     │${CYl}│     │"
+                "${CBBl}└─────┘${CYl}└─────┘"
             )
         } elseif ($logo -eq "Windows 2000" -Or $logo -eq "Windows 98" -Or $logo -eq "Windows 95") {
             $COLUMNS = 45
             @(
-                "                         ${e}[${t};30mdBBBBBBBb"
-                "                     ${e}[${t};30mdBBBBBBBBBBBBBBBb"
-                "             ${e}[${t};30m   000 BBBBBBBBBBBBBBBBBBBB"
-                "${e}[${t};30m:::::        000000 BBBBB${e}[${t};31mdBB${e}[${t};30mBBBB${e}[${t};32mBBBb${e}[${t};30mBBBBBBB"
-                "${e}[${t};31m::::: ${e}[${t};30m====== 000${e}[${t};31m000 BBBBBBBB${e}[${t};30mBBBB${e}[${t};32mBBBBBBBBB${e}[${t};30mBBBB"
-                "${e}[${t};31m::::: ====== ${e}[${t};31m000000 BBBBBBBB${e}[${t};30mBBBB${e}[${t};32mBBBBBBBBB${e}[${t};30mBBBB"
-                "${e}[${t};31m::::: ====== ${e}[${t};31m000000 BBBBBBBB${e}[${t};30mBBBB${e}[${t};32mBBBBBBBBB${e}[${t};30mBBBB"
-                "${e}[${t};31m::::: ====== ${e}[${t};31m000000 BBBBBBBB${e}[${t};30mBBBB${e}[${t};32mBBBBBBBBB${e}[${t};30mBBBB"
-                "${e}[${t};31m::::: ====== 000000 BBBBf${e}[${t};30mBBBBBBBBBBB${e}[${t};32m`BBBB${e}[${t};30mBBBB"
-                "${e}[${t};30m::::: ${e}[${t};31m====== 000${e}[${t};30m000 BBBBBBBBBBBBBBBBBBBBBBBBB"
-                "${e}[${t};30m::::: ====== 000000 BBBBB${e}[${t};34mdBB${e}[${t};30mBBBB${e}[${t};33mBBBb${e}[${t};30mBBBBB${e}[${t};30mBBBB"
-                "${e}[${t};34m::::: ${e}[${t};30m====== 000${e}[${t};34m000 BBBBBBBB${e}[${t};30mBBBB${e}[${t};33mBBBBBBBBB${e}[${t};30mBBBB"
-                "${e}[${t};34m::::: ====== 000000 BBBBBBBB${e}[${t};30mBBBB${e}[${t};33mBBBBBBBBB${e}[${t};30mBBBB"
-                "${e}[${t};34m::::: ====== 000000 BBBBBBBB${e}[${t};30mBBBB${e}[${t};33mBBBBBBBBB${e}[${t};30mBBBB"
-                "${e}[${t};34m::::: ====== 000000 BBBBBBBB${e}[${t};30mBBBB${e}[${t};33mBBBBBBBBB${e}[${t};30mBBBB"
-                "${e}[${t};34m::::: ====== 000000 BBBBf${e}[${t};30mBBBBBBBBBBB${e}[${t};33m`BBBB${e}[${t};30mBBBB"
-                "${e}[${t};30m::::: ${e}[${t};34m====== 000${e}[${t};30m000 BBBBBf         `BBBBBBBBB"
-                "${e}[${t};30m   :: ====== 000000 BBf                `BBBBB"
-                "     ${c1}   ==  000000 B                     BBB"
+                "                         ${CBBk}dBBBBBBBb"
+                "                     ${CBBk}dBBBBBBBBBBBBBBBb"
+                "             ${CBBk}   000 BBBBBBBBBBBBBBBBBBBB"
+                "${CBBk}:::::        000000 BBBBB${CBRd}dBB${CBBk}BBBB${CBBk}BBBb${CBBk}BBBBBBB"
+                "${CBRd}::::: ${CBBk}====== 000${CBRd}000 BBBBBBBB${CBBk}BBBB${CBBk}BBBBBBBBB${CBBk}BBBB"
+                "${CBRd}::::: ====== ${CBRd}000000 BBBBBBBB${CBBk}BBBB${CBBk}BBBBBBBBB${CBBk}BBBB"
+                "${CBRd}::::: ====== ${CBRd}000000 BBBBBBBB${CBBk}BBBB${CBBk}BBBBBBBBB${CBBk}BBBB"
+                "${CBRd}::::: ====== ${CBRd}000000 BBBBBBBB${CBBk}BBBB${CBBk}BBBBBBBBB${CBBk}BBBB"
+                "${CBRd}::::: ====== 000000 BBBBf${CBBk}BBBBBBBBBBB${CBBk}`BBBB${CBBk}BBBB"
+                "${CBBk}::::: ${CBRd}====== 000${CBBk}000 BBBBBBBBBBBBBBBBBBBBBBBBB"
+                "${CBBk}::::: ====== 000000 BBBBB${CBBl}dBB${CBBk}BBBB${CBBk}BBBb${CBBk}BBBBB${CBBk}BBBB"
+                "${CBBl}::::: ${CBBk}====== 000${CBBl}000 BBBBBBBB${CBBk}BBBB${CBBk}BBBBBBBBB${CBBk}BBBB"
+                "${CBBl}::::: ====== 000000 BBBBBBBB${CBBk}BBBB${CBBk}BBBBBBBBB${CBBk}BBBB"
+                "${CBBl}::::: ====== 000000 BBBBBBBB${CBBk}BBBB${CBBk}BBBBBBBBB${CBBk}BBBB"
+                "${CBBl}::::: ====== 000000 BBBBBBBB${CBBk}BBBB${CBBk}BBBBBBBBB${CBBk}BBBB"
+                "${CBBl}::::: ====== 000000 BBBBf${CBBk}BBBBBBBBBBB${CBBk}`BBBB${CBBk}BBBB"
+                "${CBBk}::::: ${CBBl}====== 000${CBBk}000 BBBBBf         `BBBBBBBBB"
+                "${CBBk}   :: ====== 000000 BBf                `BBBBB"
+                "     ${CBBk}   ==  000000 B                     BBB"
             )
         } else {
             Write-Error 'The only version logos supported are Windows 11, Windows 10/8.1/8, Windows 7/Vista/XP, Windows 2000/98/95 and Microsoft.'

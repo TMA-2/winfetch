@@ -786,12 +786,19 @@ function public_ip {
 $config = @(
     'resolution_net' #  1.81 avg
     'resolution_wmi' # 74.67 avg
-    'locale_net'     #  0.52 avg
     'locale_reg'     #  4.82 avg
+    'locale_net'     #  0.52 avg
     'timezone_net'   #  2.05 avg
     'timezone_wmi'   # 11.20 avg
     'cpu_reg1'
     'cpu_reg2'
+    'ps_pkgs'
+    'pkgs'
+    'public_ip_ifconfig'
+    # 'public_ip_ipinfo'
+    # 'public_ip_myip'
+    # 'colorbar'
+    # 'colorbar_gen'
     'cpu_usage'
     'memory'
     'cpu_usage_proc'
@@ -801,17 +808,21 @@ $config = @(
 # output = function result
 # results = Command = item, Output = output, Time = execution time
 
-function winfetch_test([string[]]$Funcs = $config, [int]$Repeat = 10) {
+function test-main {
+    Param(
+        $Funcs = $config,
+        $Repeat = 10
+    )
     # Initialize an array to store the results
     $results = @()
 
     # Iterate through each command in $Cmds
     foreach ($item in $Funcs) {
         # Initialize variables to store total execution time and output
-        $totalExecutionTime = [int[]]@()
+        $totalExecutionTime = @()
         $output = $null
 
-        # Run each command 10 times
+        # Run each command X times
         for ($i = 0; $i -lt $Repeat; $i++) {
             $executionTime = Measure-Command {
                 $output = & "info_$item"
@@ -820,21 +831,22 @@ function winfetch_test([string[]]$Funcs = $config, [int]$Repeat = 10) {
         }
 
         # Calculate the average execution time
-        $ExecutionTimes = $totalExecutionTime | Measure-Object
+        $averageExecutionTime = $totalExecutionTime | Measure-Object -AllStats
 
         # Store the output and average execution time in the results array
         $results += [pscustomobject]@{
-            Command     = $item
-            Output      = $output.content
-            TotalTime   = [math]::Round($ExecutionTimes.Sum, 3)
-            AverageTime = [math]::Round($ExecutionTimes.Average, 3)
-            MinimumTime = [math]::Round($ExecutionTimes.Minimum, 3)
-            MaximumTime = [math]::Round($ExecutionTimes.Maximum, 3)
+            Command       = $item
+            Title         = $output.title
+            Output        = $output.content
+            TotalTime     = [math]::Round($averageExecutionTime.Sum, 2)
+            AverageTime   = [math]::Round($averageExecutionTime.Average, 2)
+            MaximumTime   = [math]::Round($averageExecutionTime.Maximum, 2)
+            MinimumTime   = [math]::Round($averageExecutionTime.Minimum, 2)
         }
     }
 
     # Output the results
-    $results | ogv
+    $results
 }
 
 # NOTE: passing the function body with both using: and function: works
@@ -851,6 +863,7 @@ function winfetch_test_mta {
     )
 
     $results = @()
+    $jobs = @()
 
     # run each command in a separate job
     foreach ($item in $Funcs) {
@@ -901,6 +914,8 @@ function winfetch_test_mta {
             MinimumTime   = [math]::Round($ExecutionTime.Minimum, 3)
             MaximumTime   = [math]::Round($ExecutionTime.Maximum, 3)
         }
+
+        Write-Verbose "Job $jobname completed in $($infotime.TotalMilliseconds) ms"
     }
 
     "Total time: {0:n3}" -f $timetotal.TotalSeconds | Write-Host

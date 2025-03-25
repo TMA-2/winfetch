@@ -27,7 +27,7 @@ Context "winfetch script" {
     # TODO: Check parameters
 }
 
-Context "winfetch functions" {
+Context "winfetch function standardization" {
     foreach($item in $WFCmds) {
         Describe $item {
             It "should return a hashtable with title and content keys" {

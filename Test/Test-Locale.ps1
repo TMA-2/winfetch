@@ -1,4 +1,4 @@
-$LocaleInfo = Import-PowerShellDataFile 'LocaleLookup.psd1' -SkipLimitCheck
+$LocaleInfo = Import-PowerShellDataFile "$PSScriptRoot\LocaleLookup.psd1" -SkipLimitCheck
 
 function info_locale1 {
     $localeLookup = $LocaleInfo.Locale
@@ -55,6 +55,7 @@ $TimeTotals = @()
         Write-Host "Test ${_}: Mismatch"
         Write-Host "Locale 1: $($locale1.content)"
         Write-Host "Locale 2: $($locale2.content)"
+        Break
     }
 }
 

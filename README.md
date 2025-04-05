@@ -31,6 +31,46 @@ According to [benchmarks](https://github.com/lptstr/winfetch/wiki/Winfetch-vs-Ne
 
 #### More: \[[Installation](https://github.com/lptstr/winfetch/wiki/Installation)\] \[[Configuration](https://github.com/lptstr/winfetch/wiki/Configuration)\] \[[Colors](https://github.com/lptstr/winfetch/wiki/ANSI-Colors)\]
 
----
+
+## Configuration
+This new version implements a cache so longer-running sections like pkgs and ps_pkgs don't run if they're within a timespan (by default, 15 minutes), and `-Cache` is specified.
+
+Cache location: TBD
+
+### File System
+**Possible locations**
+- `~\.config\winfetch\cache`
+- `~\appdata\local\winfetch\cache`
+
+**Filename**: info_section.clixml / info_section.json
+
+Example for `info_`:
+```xml
+<!-- Fill with sample content -->
+```
+
+### Registry
+Something like: `HKCU\Software\Winfetch`
+```yaml
+Configuration:
+  	Switches:
+  		image: (string) Path to image
+    	ascii: (switch) Whether to use ASCII
+    	genconf: (switch) Generate config.ps1 off the switches used
+    	configpath: (string) Path to config.ps1
+    	noimage: (switch) Only show information without logo
+    	logo: (string)
+    	blink: (switch)
+    	stripansi: (switch)
+\Cache:
+    CacheDate: DateTime of last update
+    CacheAge: Timespan between the last time it ran and CacheDate
+    \info_<section>:
+      Title: The section title
+      Content: The section content
+      RunTime: Time (ms) it took to run last time -Measure was specified?
+      LastRun: If Cached, the datetime it was run
+      Cached: (?) If the actual output will be saved in a file path, True/False if it exists
+```
 
 ###### _For old systems, use the [legacy branch](https://github.com/lptstr/winfetch/tree/legacy)._

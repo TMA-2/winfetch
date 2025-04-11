@@ -2,16 +2,18 @@ using namespace System
 using namespace System.IO
 using namespace System.Management.Automation
 using namespace System.Management.Automation.Language
+using namespace System.Runtime.Caching
 using namespace System.Collections.Generic
 
+# investigate using https://learn.microsoft.com/en-us/dotnet/api/system.runtime.caching.cacheitem?view=netframework-4.8.1
+
 # cache in memory
-class CacheHelper
+class CacheMemory
 {
-    static [Dictionary[string, Object[]]] $ObjectCache = [Dictionary[string, Object[]]]::new()
-    
+    static [MemoryCache]$MemoryCache = [MemoryCache]::new("WinfetchCache")
     static [bool] $IsCacheEnabled = $true
 
-    # Validates that the string is a valid PowerShell command with no nested expressions
+    # Validates that the string is a valid info_* function with no nested expressions
     hidden static [bool] CommandIsSafe([string] $Command) {
         $ParsedTokens = $null
         $Errors = $null
@@ -20,21 +22,84 @@ class CacheHelper
             return $false
         }
         foreach ($Token in $ParsedTokens) {
-            if
-            (
-                $Token -isnot [StringLiteralToken] -and
-                $Token -isnot [ParameterToken] -and
-                $Token.Kind -ne [TokenKind]::EndOfInput -and
+            $Unsafe = $Token -isnot [StringLiteralToken] -and `
+                $Token -isnot [ParameterToken] -and `
+                $Token.Kind -ne [TokenKind]::EndOfInput -and `
                 $Token.Kind -ne [TokenKind]::Identifier
-            ) {
-                return $false
-            }
+            if($Unsafe) {return $false}
         }
-        return $true
+        # Check that the function name is expected and exists
+        $CommandName = $ParsedTokens.Where({$_.TokenFlags -eq [TokenFlags]::CommandName}).Text
+        if($CommandName -match '^info_\w+' -and (gcm $CommandName -ea SilentlyContinue)) {
+            return $true
+        } else {
+            return $false
+        }
     }
 
-    static [Object[]] GetCachedResults([string] $Command, [bool] $ValidateInput)
+    static [hashtable] GetCachedResults([string] $Command, [bool] $ValidateInput, [int] $CacheDurationInSeconds = 900)
     {
+        # Value exists in cache
+        $CacheItem = [CacheMemory]::MemoryCache.GetCacheItem($Command)
+        if ($null -ne $CacheItem) {
+            return $CacheItem.Value
+        }
+
+        $Result = if (!$ValidateInput -or [CacheMemory]::CommandIsSafe($Command))
+        {
+            try {
+                & $Command
+            }
+            catch {
+                return $null
+            }
+        }
+        else {
+            return $null
+        }
+
+        if($null -ne $Result) {
+            $CachePolicy = [CacheItemPolicy]::new()
+            $CachePolicy.AbsoluteExpiration = [DateTimeOffset]::Now.AddSeconds($CacheDurationInSeconds)
+            [CacheMemory]::MemoryCache.Add($Command, $Result, $CachePolicy)
+        }
+
+        return $Result
+    }
+}
+class CacheHelper
+{
+    static [Dictionary[string, hashtable]] $ObjectCache = [Dictionary[string, hashtable]]::new()
+    
+    static [bool] $IsCacheEnabled = $true
+
+    # Validates that the string is a valid info_* function with no nested expressions
+    hidden static [bool] CommandIsSafe([string] $Command) {
+        $ParsedTokens = $null
+        $Errors = $null
+        $null = [Parser]::ParseInput($Command, [ref]$ParsedTokens, [ref]$Errors)
+        if ($Errors.Count -gt 0) {
+            return $false
+        }
+        foreach ($Token in $ParsedTokens) {
+            $Unsafe = $Token -isnot [StringLiteralToken] -and `
+                $Token -isnot [ParameterToken] -and `
+                $Token.Kind -ne [TokenKind]::EndOfInput -and `
+                $Token.Kind -ne [TokenKind]::Identifier
+            if($Unsafe) {return $false}
+        }
+        # Check that the function name is expected and exists
+        $CommandName = $ParsedTokens.Where({$_.TokenFlags -eq [TokenFlags]::CommandName}).Text
+        if($CommandName -match '^info_\w+' -and (gcm $CommandName -ea SilentlyContinue)) {
+            return $true
+        } else {
+            return $false
+        }
+    }
+
+    static [hashtable] GetCachedResults([string] $Command, [bool] $ValidateInput)
+    {
+        # Value exists in cache
         $Result = $null
         if ([CacheHelper]::ObjectCache.TryGetValue($Command, [ref] $Result))
         {
@@ -44,7 +109,10 @@ class CacheHelper
         {
             try
             {
-                Invoke-Expression -Command $Command
+                # Invoke-Expression -Command $Command
+                # Invoke-Command -ScriptBlock {& $Command}
+                # [scriptblock]::Create($Command).InvokeReturnAsIs()
+                & $Command
             }
             catch
             {
@@ -54,7 +122,7 @@ class CacheHelper
         else
         {
             return $null
-        } 
+        }
         [CacheHelper]::ObjectCache.Add($Command, $Result)
         return $Result
     }
@@ -62,41 +130,43 @@ class CacheHelper
 
 # cache to file
 class OutputCache {
-    [string]$CacheDirectory = "$env:userprofile\.config\winfetch"
-    [string]$CacheFileName = 'Cache.json'
-    [string]$CachePath = [IO.Path]::Combine($this.CacheDirectory, $this.CacheFileName)
-    [int]$CacheDurationInSeconds = 900
+    hidden static [string]$CacheDirectory = "$env:userprofile\.config\winfetch"
+    hidden static [string]$CacheFileName = 'Cache.json'
+    static [string]$CachePath = [IO.Path]::Combine([OutputCache]::CacheDirectory, [OutputCache]::CacheFileName)
+    static [int]$CacheDurationInSeconds = 900 # 15 minutes
+
 
     OutputCache() {}
 
     OutputCache([string]$CacheFileName) {
-        $this.CacheFileName = $CacheFileName
-        $this.CachePath = [IO.Path]::Combine($this.CacheDirectory, $this.CacheFileName)
+        [OutputCache]::CacheFileName = $CacheFileName
+        [OutputCache]::CachePath = [IO.Path]::Combine([OutputCache]::CacheDirectory, [OutputCache]::CacheFileName)
     }
     
     OutputCache([string]$CacheFileName, [int]$CacheDurationInSeconds) {
-        $this.CacheFileName = $CacheFileName
-        $this.CacheDurationInSeconds = $CacheDurationInSeconds
-        $this.CachePath = [IO.Path]::Combine($this.CacheDirectory, $this.CacheFileName)
+        [OutputCache]::CacheFileName = $CacheFileName
+        [OutputCache]::CacheDurationInSeconds = $CacheDurationInSeconds
+        [OutputCache]::CachePath = [IO.Path]::Combine([OutputCache]::CacheDirectory, [OutputCache]::CacheFileName)
     }
 
-    [bool]IsCacheValid() {
-        if ([IO.Path]::Exists($this.CachePath)) {
-            $fileAge = (Get-Date) - (Get-Item $this.CachePath).LastWriteTime
-            return $fileAge.TotalSeconds -lt $this.CacheDurationInSeconds
+    [bool] IsCacheValid() {
+        if (Test-Path ([OutputCache]::CachePath)) {
+            $fileAge = (Get-Date) - (Get-Item ([OutputCache]::CachePath)).LastWriteTime
+            return $fileAge.TotalSeconds -lt [OutputCache]::CacheDurationInSeconds
         }
         return $false
     }
 
-    [void]SaveToCache([object]$Data) {
-        $Data | ConvertTo-Json -Depth 10 | Set-Content -Path $this.CachePath
+    [void] SaveTfoCache([string]$Title, [object]$Content) {
+        $Content | ConvertTo-Json -Depth 10 | Set-Content -Path ([OutputCache]::CachePath)
     }
 
-    [object]LoadFromCache() {
-        return Get-Content -Path $this.CachePath -Raw | ConvertFrom-Json
+    [hashtable] LoadFromCache() {
+        $Data = Get-Content -Path ([OutputCache]::CachePath) -Raw | ConvertFrom-Json
+        Return $Data
     }
 
-    [object]GetOrExecute([scriptblock]$ScriptBlock) {
+    [object] GetOrExecute([scriptblock]$ScriptBlock) {
         if ($this.IsCacheValid()) {
             return $this.LoadFromCache()
         } else {

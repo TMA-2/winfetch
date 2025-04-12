@@ -5,10 +5,12 @@ using namespace System.Management.Automation.Language
 using namespace System.Runtime.Caching
 using namespace System.Collections.Generic
 
-# NOTE: Working
-class CacheHelper {
-    static [Dictionary[string, hashtable]] $ObjectCache = [Dictionary[string, hashtable]]::new()
+# investigate using https://learn.microsoft.com/en-us/dotnet/api/system.runtime.caching.cacheitem?view=netframework-4.8.1
+# ref: https://learn.microsoft.com/en-us/dotnet/api/system.runtime.caching.memorycache?view=netframework-4.8.1
 
+# cache in memory
+class CacheMemory {
+    static [MemoryCache]$MemoryCache = [MemoryCache]::new('WinfetchCache')
     static [bool] $IsCacheEnabled = $true
 
     # Validates that the string is a valid info_* function with no nested expressions
@@ -24,45 +26,45 @@ class CacheHelper {
                 $Token -isnot [ParameterToken] -and `
                 $Token.Kind -ne [TokenKind]::EndOfInput -and `
                 $Token.Kind -ne [TokenKind]::Identifier
-            if($Unsafe) {return $false}
+            if ($Unsafe) {
+                return $false
+            }
         }
         # Check that the function name is expected and exists
         $CommandName = $ParsedTokens.Where({$_.TokenFlags -eq [TokenFlags]::CommandName}).Text
-        if($CommandName -match '^info_\w+' -and (gcm $CommandName -ea SilentlyContinue)) {
+        if ($CommandName -match '^info_\w+' -and (Get-Command $CommandName -ea SilentlyContinue)) {
             return $true
-        } else {
+        }
+        else {
             return $false
         }
     }
 
-    static [hashtable] GetCachedResults([string] $Command, [bool] $ValidateInput)
-    {
+    static [hashtable] GetCachedResults([string] $Command, [bool] $ValidateInput, [int] $CacheDurationInSeconds = 900) {
         # Value exists in cache
-        $Result = $null
-        if ([CacheHelper]::ObjectCache.TryGetValue($Command, [ref] $Result))
-        {
-            return $Result
+        $CacheItem = [CacheMemory]::MemoryCache.GetCacheItem($Command)
+        if ($null -ne $CacheItem) {
+            return $CacheItem.Value
         }
-        $Result = if (!$ValidateInput -or [CacheHelper]::CommandIsSafe($Command))
-        {
-            try
-            {
-                # Invoke-Expression -Command $Command
-                # Invoke-Command -ScriptBlock {& $Command}
-                # [scriptblock]::Create($Command).InvokeReturnAsIs()
+
+        $Result = if (!$ValidateInput -or [CacheMemory]::CommandIsSafe($Command)) {
+            try {
                 & $Command
             }
-            catch
-            {
+            catch {
                 return $null
             }
         }
-        else
-        {
+        else {
             return $null
         }
-        [CacheHelper]::ObjectCache.Add($Command, $Result)
+
+        if ($null -ne $Result) {
+            $CachePolicy = [CacheItemPolicy]::new()
+            $CachePolicy.AbsoluteExpiration = [DateTimeOffset]::Now.AddSeconds($CacheDurationInSeconds)
+            [CacheMemory]::MemoryCache.Add($Command, $Result, $CachePolicy)
+        }
+
         return $Result
     }
 }
-

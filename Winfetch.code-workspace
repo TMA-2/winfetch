@@ -1,0 +1,121 @@
+{
+	"folders": [
+		{
+			"name": "Winfetch",
+			"path": "."
+		},
+    {
+      "name": "Config",
+      "path": "c:\\Users\\e.dunhjo\\.config\\winfetch"
+    }
+	],
+  "settings": {
+    "editor.lineNumbers": "on",
+    "explorer.incrementalNaming": "smart",
+    "explorer.excludeGitIgnore": false,
+    "explorer.fileNesting.enabled": true,
+    "explorer.fileNesting.expand": false,
+    "explorer.fileNesting.patterns": {
+      "*.xml": "${basename}.Platform.${extname}, ${basename}.dll-Help.${extname}, ${basename}.Custom.dll-Help.${extname}",
+      "*.psd1": "${capture}.psm1, ${capture}.ps1, ${capture}.Format.ps1xml, ${capture}.Types.ps1xml, ${capture}.dll-help.xml",
+      "*.ps1": "${basename}.ps1.bak, ${capture}.ps1.old, ${basename}.old.ps1, ${basename}.[0-9].ps1, ${basename}.[0-9].bak.ps1"
+    },
+    "files.exclude": {
+      "**/obj/": true,
+      "**/bin/": true,
+      "**/.vs/": true,
+      "**/.DS_Store/": true,
+      "**/Thumbs.db": true,
+    },
+    "[json]": {
+      "editor.quickSuggestions": {
+        "strings": true
+      },
+      "editor.detectIndentation": false,
+      "editor.indentSize": "tabSize",
+      "editor.tabSize": 2,
+      "editor.suggest.insertMode": "replace",
+      "editor.guides.indentation": true
+    },
+    "[jsonc]": {
+      "editor.quickSuggestions": {
+        "strings": true
+      },
+      "editor.detectIndentation": false,
+      "editor.indentSize": "tabSize",
+      "editor.tabSize": 2,
+      "editor.suggest.insertMode": "replace",
+      "editor.guides.indentation": true
+    },
+    "[snippets]": {
+      "editor.detectIndentation": false,
+      "editor.indentSize": "tabSize",
+      "editor.tabSize": 2,
+      "editor.insertSpaces": true,
+      "editor.snippetSuggestions": "bottom"
+    },
+    "[shellscript]": {
+      "files.eol": "\n"
+    },
+    "[powershell]": {
+      "editor.formatOnPaste": true,
+      "editor.trimAutoWhitespace": true
+    },
+    "git.enabled": true,
+    "git.autorefresh": true,
+    "git.autoRepositoryDetection": "openEditors",
+    "poshProTools.checkForModuleUpdates": false,
+    "poshProTools.disableNewsNotification": true,
+    "poshProTools.clearScreenAfterLoad": false,
+    "poshProTools.sideBar.moduleVisibility": false,
+    "poshProTools.sideBar.reflectionVisibility": false,
+    "poshProTools.sideBar.sessionVisibility": true,
+    "powershell.cwd": "~\\OneDrive - Texas Health Resources\\Scripts\\PS",
+    "powershell.scriptAnalysis.settingsPath": "Scripts\\.vscode\\PSScriptAnalyzerSettings.psd1",
+    "powershell.powerShellDefaultVersion": "PowerShell (x64)",
+    "powershell.codeFormatting.useCorrectCasing": true,
+    "powershell.codeFormatting.trimWhitespaceAroundPipe": true,
+    "powershell.codeFormatting.whitespaceBetweenParameters": true,
+    "powershell.codeFormatting.preset": "Stroustrup",
+    "powershell.developer.editorServicesLogLevel": "Information",
+    "powershell.trace.server": "verbose",
+    "powershell.sideBar.CommandExplorerVisibility": false,
+    "powershell.pester.codeLens": true,
+    "powershell.pester.useLegacyCodeLens": false,
+    "dotnet.defaultSolution": "Scripts/Source/Shellify/Shellify.sln",
+    "xml.format.xsiSchemaLocationSplit": "onElement",
+    "xml.trace.server": "off",
+    "xml.format.maxLineWidth": 120,
+    "xml.format.splitAttributes": "splitNewLine",
+    "xml.format.splitAttributesIndentSize": 2,
+    "xml.format.joinCommentLines": true,
+    "xml.completion.autoCloseTags": true,
+    "bashIde.explainshellEndpoint": "https://explainshell.com/",
+    "colorInfo.languages": [
+      {
+        "selector": "powershell",
+        "colors": [
+          "css-color-names",
+          "hex+alpha",
+          "rgb"
+        ]
+      },
+      {
+        "selector": "markdown",
+        "colors": [
+          "css-color-names",
+          "hex+alpha",
+          "rgb"
+        ]
+      }
+    ],
+    "todo-tree.tree.scanMode": "current file",
+    "todo-tree.tree.disableCompactFolders": true,
+    "todo-tree.tree.tagsOnly": false,
+    "rewrap.autoWrap.enabled": false,
+    "rewrap.reformat": true,
+    "rewrap.wrappingColumn": 120,
+    "github.copilot.chat.terminalChatLocation": "quickChat",
+    "github.copilot.chat.generateTests.codeLens": true
+  }
+}

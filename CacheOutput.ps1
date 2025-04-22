@@ -1,106 +1,83 @@
 using namespace System
 using namespace System.IO
 using namespace System.Management.Automation
-using namespace System.Management.Automation.Language
 using namespace System.Runtime.Caching
 using namespace System.Collections.Generic
 
-# cache to file
-# JSON outline:
-<#
-{
-    "DateTime": "2023-10-01T12:00:00Z",
-    "MaxAge": 900,
-    "Cache": {
-        "info_abc": {
-            "content": "output",
-            "LastWriteTime": "2023-10-01T12:00:00Z"
-        },
-        "info_def": {
-            "content": "output",
-            "LastWriteTime": "2023-10-01T08:00:00Z"
-        }
-    }
-}
-#>
-# investigate using https://learn.microsoft.com/en-us/dotnet/api/system.runtime.caching.cacheitem?view=netframework-4.8.1
 class CacheOutput {
-    static [string]$CacheDirectory = "$env:userprofile\.config\winfetch"
-    static [string]$CacheFileName = 'Cache.json'
-    static [string]$CachePath = [IO.Path]::Combine([CacheOutput]::CacheDirectory, [CacheOutput]::CacheFileName)
-    static [int]$CacheMaxAge = 900
-
-    # Dictionary to store cached objects in memory
-    static [Dictionary[string, hashtable]]$ObjectCache = [Dictionary[string, hashtable]]::new()
-
-    [PSCustomObject]$CacheData = [PSCustomObject]@{
-        DateTime = [datetime]::Now.ToString("s")
-        MaxAge = [cacheoutput]::CacheMaxAge
-        Cache = [PSCustomObject]@{}
-    }
+    static [MemoryCache] $MemoryCache = [MemoryCache]::Default
+    static [string] $CacheDirectory = "$env:userprofile\.config\winfetch"
+    static [string] $CacheFileName = 'Cache.json'
+    static [string] $CachePath = [IO.Path]::Combine([CacheOutput]::CacheDirectory, [CacheOutput]::CacheFileName)
+    static [int] $CacheMaxAge = 900
 
     #region: ctor
     CacheOutput() {}
 
-    CacheOutput([string]$CacheFileName) {
+    CacheOutput([string] $CacheFileName, [int] $MaxAgeInSeconds) {
         [CacheOutput]::CacheFileName = $CacheFileName
         [CacheOutput]::CachePath = [IO.Path]::Combine([CacheOutput]::CacheDirectory, [CacheOutput]::CacheFileName)
-    }
-
-    CacheOutput([string]$CacheFileName, [int]$MaxAgeInSeconds) {
-        [CacheOutput]::CacheFileName = $CacheFileName
         [CacheOutput]::CacheMaxAge = $MaxAgeInSeconds
-        [CacheOutput]::CachePath = [IO.Path]::Combine([CacheOutput]::CacheDirectory, [CacheOutput]::CacheFileName)
     }
     #endregion: ctor
 
     #region: methods
-    [bool]IsCacheValid() {
-        if (Test-Path $this.CachePath) {
-            $Data = Get-Content -Path $this.CachePath -Raw | ConvertFrom-Json
-            $fileAge = [datetime]::Now - [datetime]$Data.DateTime
-            if($fileAge.TotalSeconds -lt $this.CacheDurationInSeconds) {
-                return $true
-            } else {
-                return $false
+    [bool] IsCacheValid([string] $Key) {
+        # Check if the cache item exists and is valid
+        $CacheItem = [CacheOutput]::MemoryCache.GetCacheItem($Key)
+        if ($CacheItem -ne $null) {
+            return $true
+        }
+        return $false
+    }
+
+    [void] SaveToCache([string] $Key, [object] $Data) {
+        # Create a cache policy with expiration
+        $CachePolicy = [CacheItemPolicy]::new()
+        $CachePolicy.AbsoluteExpiration = (Get-Date).AddSeconds([CacheOutput]::CacheMaxAge)
+
+        # Add the data to the memory cache
+        [CacheOutput]::MemoryCache.Set($Key, $Data, $CachePolicy)
+
+        # Save to file for persistence
+        if (!(Test-Path ([CacheOutput]::CacheDirectory))) {
+            New-Item -ItemType Directory -Path ([CacheOutput]::CacheDirectory) | Out-Null
+        }
+        $CacheData = @{
+            DateTime = (Get-Date).ToString("s")
+            MaxAge = [CacheOutput]::CacheMaxAge
+            Cache = @{
+                $Key = @{
+                    content = $Data
+                    LastWriteTime = (Get-Date).ToString("s")
+                }
             }
-        } else {
-            return $false
         }
+        $CacheData | ConvertTo-Json -Depth 10 | Set-Content -Path ([CacheOutput]::CachePath)
     }
 
-    [void]SaveToCache([string]$Key, [object]$Data) {
-        # save to in-memory cache
-        if ([CacheOutput]::ObjectCache.ContainsKey($Key)) {
-            [CacheOutput]::ObjectCache[$Key] = $Data.ToString()
-        } else {
-            [CacheOutput]::ObjectCache.Add($Key, $Data.ToString())
+    [object] LoadFromCache([string] $Key) {
+        # Retrieve the data from the memory cache
+        $CacheItem = [CacheOutput]::MemoryCache.GetCacheItem($Key)
+        if ($CacheItem -ne $null) {
+            return $CacheItem.Value
         }
-        $Data = Get-Content [CacheOutput]::CachePath -Raw | ConvertFrom-Json
-        $Data.Cache.$Key = [PSCustomObject]@{
-            content = $Data
-            LastWriteTime = [datetime]::Now.ToString("s")
-        }
-        $Data | ConvertTo-Json -Depth 10 | Set-Content -Path $this.CachePath
+        return $null
     }
 
-    [hashtable] LoadFromCache() {
-        $Data = Get-Content -Path ([CacheOutput]::CachePath) -Raw | ConvertFrom-Json
-        Return $Data
-    }
-
-    [object] GetOrExecute([scriptblock]$ScriptBlock) {
-        if ($this.IsCacheValid()) {
-            return $this.LoadFromCache()
+    [object] GetOrExecute([string] $Key, [scriptblock] $Command) {
+        if ([CacheOutput]::IsCacheValid($Key)) {
+            return [CacheOutput]::LoadFromCache($Key)
         } else {
-            $result = & $ScriptBlock
-            $this.SaveToCache($result)
-            return $result
+            $Result = & $Command
+            [CacheOutput]::SaveToCache($Key, $Result)
+            return $Result
         }
     }
     #endregion: methods
 }
 
 # Example usage:
-# $cache = [CacheOutput]::new("c:\path\to\cache.json", 3600)
-# $result = $cache.GetOrExecute({ Get-Process })
+# $cache = [CacheOutput]::new("Cache.json", 3600)
+# $result = $cache.GetOrExecute("Get-Process", { Get-Process })
+# $result | Format-Table

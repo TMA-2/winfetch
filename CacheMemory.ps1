@@ -1,3 +1,6 @@
+# Uses MemoryCache class, does not write to persistent file
+# TODO: Test!
+
 using namespace System
 using namespace System.IO
 using namespace System.Management.Automation
@@ -8,7 +11,6 @@ using namespace System.Collections.Generic
 # investigate using https://learn.microsoft.com/en-us/dotnet/api/system.runtime.caching.cacheitem?view=netframework-4.8.1
 # ref: https://learn.microsoft.com/en-us/dotnet/api/system.runtime.caching.memorycache?view=netframework-4.8.1
 
-# cache in memory
 class CacheMemory {
     static [MemoryCache]$MemoryCache = [MemoryCache]::new('WinfetchCache')
     static [bool] $IsCacheEnabled = $true

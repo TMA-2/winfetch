@@ -1,3 +1,8 @@
+# Writes to manual cache, does not write to persistent file
+# TODO: Use psobject instead of hashtable
+# TODO: Add writing to persistent json file
+# Taken from MartinGC94\UsefulArgumentCompleters and modified
+
 using namespace System
 using namespace System.IO
 using namespace System.Management.Automation
@@ -6,7 +11,7 @@ using namespace System.Runtime.Caching
 using namespace System.Collections.Generic
 
 # NOTE: Working
-class CacheHelper {
+class WinfetchCache {
     static [Dictionary[string, hashtable]] $ObjectCache = [Dictionary[string, hashtable]]::new()
 
     static [bool] $IsCacheEnabled = $true
@@ -39,11 +44,11 @@ class CacheHelper {
     {
         # Value exists in cache
         $Result = $null
-        if ([CacheHelper]::ObjectCache.TryGetValue($Command, [ref] $Result))
+        if ([WinfetchCache]::ObjectCache.TryGetValue($Command, [ref] $Result))
         {
             return $Result
         }
-        $Result = if (!$ValidateInput -or [CacheHelper]::CommandIsSafe($Command))
+        $Result = if (!$ValidateInput -or [WinfetchCache]::CommandIsSafe($Command))
         {
             try
             {
@@ -61,7 +66,7 @@ class CacheHelper {
         {
             return $null
         }
-        [CacheHelper]::ObjectCache.Add($Command, $Result)
+        [WinfetchCache]::ObjectCache.Add($Command, $Result)
         return $Result
     }
 }
